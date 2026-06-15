@@ -1,0 +1,480 @@
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from time import time
+from typing import Any
+
+try:
+    from .replies import get_reply
+except ImportError:
+    from replies import get_reply
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+ViolationCategory = str
+
+WORD_LEFT = r"(?<![а-яa-z0-9_])"
+WORD_RIGHT = r"(?![а-яa-z0-9_])"
+
+PROFANITY_REPLY = (
+    "Брат, побойся Аллаха, давай без мата и грубости. Сохраним уважительный тон."
+)
+EXTRA_PROFANITY_WORDS_FILE = Path(__file__).with_name("words.txt")
+ADAB_BAD_WORDS_FILE = Path(__file__).with_name("adab_bad_words_ru.txt")
+
+
+@dataclass(frozen=True)
+class RuleSettings:
+    flood_messages_limit: int = 5
+    flood_time_window_seconds: int = 20
+    caps_min_length: int = 15
+    caps_ratio: float = 0.7
+
+
+RELIGIOUS_WHITELIST: list[str] = []
+
+# Редактируемые локальные списки. Profanity проверяется первым и не отменяется
+# религиозным whitelist.
+PROFANITY_PATTERNS = [
+    r"н\s*а\s*х\s*у\s*[ийеюя][а-я]*",
+    r"п\s*о\s*х\s*у\s*[ийеюя][а-я]*",
+    r"х\s*у\s*[ийеюя][а-я]*",
+    r"х\s*е\s*р[а-я]*",
+    r"п\s*и\s*з\s*д[а-я]*",
+    r"п\s*з\s*д\s*ц",
+    r"б\s*л\s*[яа](?:т[ьб]?|д[ьб]?|[а-я]*)",
+    r"е\s*б[а-я]*",
+    r"ё\s*б[а-я]*",
+    r"за\s*е\s*б[а-я]*",
+    r"у\s*е\s*б[а-я]*",
+    r"вы\s*е\s*б[а-я]*",
+    r"под\s*ъ?\s*е\s*б[а-я]*",
+    r"долбо\s*е\s*б[а-я]*",
+    r"ах\s*у\s*е[а-я]*",
+    r"муд[ао]к[а-я]*",
+    r"пош[её]л\s+ты",
+    r"пошла\s+ты",
+    r"пошли\s+вы",
+]
+
+VULGAR_PATTERNS = [
+    r"сук[аиуеой]*",
+    r"суч[а-я]*",
+    r"мраз[а-я]*",
+    r"пид[ао]р[а-я]*",
+    r"гандон[а-я]*",
+    r"шлюх[а-я]*",
+    r"дроч[а-я]*",
+    r"трах[а-я]*",
+    r"отсос[а-я]*",
+    r"сос[ие][а-я]*",
+    r"минет[а-я]*",
+]
+
+INSULT_PATTERNS = [
+    r"идиот[а-я]*",
+    r"туп(?:ой|ая|ое|ые|ого|ому|ым|ыми|ых|ую|о)?",
+    r"дурак[а-я]*",
+    r"дур(?:а|ы|ой|у|ой|ами|ах)",
+    r"дебил[а-я]*",
+    r"кретин[а-я]*",
+    r"болван[а-я]*",
+    r"безмозгл[а-я]*",
+    r"ничтожество",
+    r"имбецил[а-я]*",
+]
+
+RELIGIOUS_ATTACK_TERMS: list[str] = []
+
+RUDE_COMMAND_PATTERNS = [
+    r"заткнись",
+    r"закрой\s+рот",
+    r"(?:ты\s+)?(?:вообще\s+)?молчи(?:\s+уже)?",
+    r"лучше\s+молчи",
+]
+
+THREAT_PATTERNS = [
+    r"(?:я\s+)?(?:тебя|вас|его|ее|их)\s+(?:убью|побью|изобью|зарежу|порежу|сломаю)",
+    r"(?:убью|побью|изобью|зарежу|порежу|сломаю)\s+(?:тебя|вас|его|ее|их)",
+    r"найду\s+(?:тебя|вас)?\s*и\s+(?:убью|побью|изобью|зарежу|порежу|сломаю)",
+    r"разберусь\s+с\s+(?:тобой|вами|ним|ней)",
+]
+
+MOCKERY_PATTERNS = [
+    r"(?:ты|вы|он|она|они)\s+(?:жалк[а-я]*|посмешище|смешон|смешна|смешны)",
+    r"(?:смеюсь|угараю)\s+(?:с\s+тебя|над\s+тобой|над\s+вами)",
+]
+
+PROVOCATION_PATTERNS = [
+    r"слабо\s+(?:сказать|повторить)\s+(?:в\s+лицо|при\s+встрече)",
+    r"выйди\s+(?:поговорим|разберемся)",
+    r"давай\s+встретимся\s+и\s+разберемся",
+]
+
+
+def _compile_word_patterns(patterns: list[str]) -> list[tuple[str, re.Pattern[str]]]:
+    return [
+        (pattern, re.compile(f"{WORD_LEFT}(?:{pattern}){WORD_RIGHT}", re.IGNORECASE))
+        for pattern in patterns
+    ]
+
+
+def _compile_word_pattern(patterns: list[str]) -> re.Pattern[str]:
+    joined = "|".join(f"(?:{pattern})" for pattern in patterns)
+    return re.compile(f"{WORD_LEFT}(?:{joined}){WORD_RIGHT}", re.IGNORECASE)
+
+
+def _compile_optional_word_pattern(patterns: list[str]) -> re.Pattern[str] | None:
+    if not patterns:
+        return None
+    return _compile_word_pattern(patterns)
+
+
+def normalize_text(text: str | None) -> str:
+    if not text:
+        return ""
+
+    normalized = text.lower().replace("ё", "е")
+    normalized = normalized.replace("’", "'").replace("`", "'").replace("ʼ", "'")
+    normalized = re.sub(r"(?<=[а-яa-z])\.(?=[а-яa-z])", "", normalized)
+    normalized = normalized.translate(
+        str.maketrans(
+            {
+                "@": "а",
+                "0": "о",
+                "3": "з",
+                "4": "ч",
+                "6": "б",
+                "1": "и",
+                "!": "и",
+                "*": "",
+                "_": "",
+                "-": "",
+            }
+        )
+    )
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
+def _word_or_phrase_pattern(value: str, suffix: bool = True) -> str:
+    normalized = normalize_text(value)
+    if not normalized:
+        return ""
+
+    escaped = re.escape(normalized).replace(r"\ ", r"\s+")
+    if suffix and re.fullmatch(r"[а-яa-z]+", normalized):
+        escaped = f"{escaped}[а-яa-z]*"
+    return escaped
+
+
+def _compile_extra_words(
+    words: set[str],
+    suffix: bool = True,
+) -> list[tuple[str, re.Pattern[str]]]:
+    compiled: list[tuple[str, re.Pattern[str]]] = []
+    for word in sorted(words):
+        pattern = _word_or_phrase_pattern(word, suffix=suffix)
+        if pattern:
+            compiled.append(
+                (word, re.compile(f"{WORD_LEFT}(?:{pattern}){WORD_RIGHT}", re.IGNORECASE))
+            )
+    return compiled
+
+
+def _compile_raw_regexes(patterns: set[str]) -> list[tuple[str, re.Pattern[str]]]:
+    compiled: list[tuple[str, re.Pattern[str]]] = []
+    for pattern in sorted(patterns):
+        if _is_too_broad_external_regex(pattern):
+            logger.warning("Skipped too broad regex from %s: %s", ADAB_BAD_WORDS_FILE, pattern)
+            continue
+        try:
+            compiled.append((pattern, re.compile(pattern, re.IGNORECASE)))
+        except re.error:
+            logger.warning("Skipped invalid regex from %s: %s", ADAB_BAD_WORDS_FILE, pattern)
+    return compiled
+
+
+def _is_too_broad_external_regex(pattern: str) -> bool:
+    # This pattern from the imported list matches many ordinary Russian words
+    # beginning with "об", "заб", etc. Keep explicit roots instead.
+    return "[знпрво]?[ао]?е?б" in pattern
+
+
+def _load_extra_profanity_words() -> frozenset[str]:
+    if not EXTRA_PROFANITY_WORDS_FILE.exists():
+        return frozenset()
+
+    words: set[str] = set()
+    try:
+        for line in EXTRA_PROFANITY_WORDS_FILE.read_text(encoding="utf-8").splitlines():
+            word = normalize_text(line)
+            if word and not word.startswith("#"):
+                words.add(word)
+    except OSError:
+        logger.exception("Failed to load extra profanity words from %s", EXTRA_PROFANITY_WORDS_FILE)
+        return frozenset()
+
+    logger.info("Loaded %s extra profanity words from %s", len(words), EXTRA_PROFANITY_WORDS_FILE)
+    return frozenset(words)
+
+
+def _empty_sections() -> dict[str, set[str]]:
+    return {
+        "profanity_words": set(),
+        "profanity_regexes": set(),
+        "insult_words": set(),
+        "insult_regexes": set(),
+        "rude_commands": set(),
+        "threat_words": set(),
+    }
+
+
+def _load_adab_bad_words() -> dict[str, set[str]]:
+    sections = _empty_sections()
+    if not ADAB_BAD_WORDS_FILE.exists():
+        return sections
+
+    current_section = ""
+    try:
+        lines = ADAB_BAD_WORDS_FILE.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        logger.exception("Failed to load bad words from %s", ADAB_BAD_WORDS_FILE)
+        return sections
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line.strip("[]").upper()
+            continue
+
+        if current_section in {"PROFANITY_ROOTS", "VULGAR_SEXUAL_WORDS"}:
+            sections["profanity_words"].add(line)
+        elif current_section == "PERSONAL_INSULTS":
+            sections["insult_words"].add(line)
+        elif current_section == "RUDE_COMMANDS":
+            sections["rude_commands"].add(line)
+        elif current_section == "THREATS":
+            sections["threat_words"].add(line)
+        elif current_section == "REGEX_PROFANITY_PATTERNS":
+            sections["profanity_regexes"].add(line)
+        elif current_section == "REGEX_PERSONAL_INSULT_PATTERNS":
+            sections["insult_regexes"].add(line)
+
+    logger.info(
+        "Loaded adab bad words from %s: profanity=%s insults=%s threats=%s",
+        ADAB_BAD_WORDS_FILE,
+        len(sections["profanity_words"]) + len(sections["profanity_regexes"]),
+        len(sections["insult_words"]) + len(sections["insult_regexes"]),
+        len(sections["threat_words"]),
+    )
+    return sections
+
+
+ADAB_BAD_WORDS = _load_adab_bad_words()
+PROFANITY_RES = _compile_word_patterns(PROFANITY_PATTERNS + VULGAR_PATTERNS)
+EXTRA_PROFANITY_WORDS = _load_extra_profanity_words()
+EXTRA_PROFANITY_RES = _compile_extra_words(ADAB_BAD_WORDS["profanity_words"], suffix=True)
+EXTRA_PROFANITY_RAW_RES = _compile_raw_regexes(ADAB_BAD_WORDS["profanity_regexes"])
+EXTRA_INSULT_RE = _compile_optional_word_pattern(
+    INSULT_PATTERNS
+    + [_word_or_phrase_pattern(word) for word in ADAB_BAD_WORDS["insult_words"]]
+)
+EXTRA_INSULT_RAW_RES = _compile_raw_regexes(ADAB_BAD_WORDS["insult_regexes"])
+RUDE_COMMAND_RE = _compile_word_pattern(
+    RUDE_COMMAND_PATTERNS + [_word_or_phrase_pattern(word, suffix=False) for word in ADAB_BAD_WORDS["rude_commands"]]
+)
+THREAT_RE = _compile_word_pattern(
+    THREAT_PATTERNS + [_word_or_phrase_pattern(word, suffix=False) for word in ADAB_BAD_WORDS["threat_words"]]
+)
+MOCKERY_RE = _compile_word_pattern(MOCKERY_PATTERNS)
+PROVOCATION_RE = _compile_word_pattern(PROVOCATION_PATTERNS)
+NEGATED_INSULT_RE = re.compile(
+    rf"{WORD_LEFT}не\s+(?:{'|'.join(f'(?:{pattern})' for pattern in INSULT_PATTERNS)}){WORD_RIGHT}",
+    re.IGNORECASE,
+)
+PERSONAL_INSULT_RE = re.compile(
+    rf"{WORD_LEFT}(?:ты|вы|он|она|они|этот|эта|эти)"
+    rf"(?:\s+[а-яa-z0-9_]+){{0,4}}\s+"
+    rf"(?:{'|'.join(f'(?:{pattern})' for pattern in INSULT_PATTERNS)}){WORD_RIGHT}",
+    re.IGNORECASE,
+)
+
+
+def check_profanity(normalized: str) -> str | None:
+    for pattern, regex in PROFANITY_RES:
+        if regex.search(normalized):
+            return pattern
+    for pattern, regex in EXTRA_PROFANITY_RES:
+        if regex.search(normalized):
+            return f"{ADAB_BAD_WORDS_FILE.name}:{pattern}"
+    for pattern, regex in EXTRA_PROFANITY_RAW_RES:
+        if regex.search(normalized):
+            return f"{ADAB_BAD_WORDS_FILE.name}:{pattern}"
+
+    for word in re.findall(r"[а-яa-z]+", normalized):
+        if word in EXTRA_PROFANITY_WORDS:
+            return f"words.txt:{word}"
+
+    return None
+
+
+def check_message(
+    text: str | None,
+    user_id: int,
+    chat_id: int,
+    recent_messages: list[dict[str, Any]] | None = None,
+    settings: Any | None = None,
+) -> dict[str, Any]:
+    del user_id, chat_id
+    original_text = text or ""
+    normalized = normalize_text(original_text)
+    logger.debug("Moderation input: original=%r normalized=%r", original_text, normalized)
+    if not normalized:
+        return _debug_result(_no_violation(), None)
+
+    profanity_pattern = check_profanity(normalized)
+    if profanity_pattern:
+        logger.debug("Moderation profanity pattern: %s", profanity_pattern)
+        return _debug_result(_profanity_violation(), profanity_pattern)
+
+    if THREAT_RE.search(normalized):
+        return _debug_result(_violation("threat", "найдена прямая угроза"), None)
+
+    if _has_personal_insult(normalized):
+        return _debug_result(
+            _violation("personal_insult", "найдено прямое личное оскорбление"),
+            None,
+        )
+
+    rule_settings = _settings_from_config(settings)
+    if _is_caps_aggression(original_text, rule_settings):
+        return _debug_result(
+            _violation("spam_caps", "слишком много букв в верхнем регистре"),
+            None,
+        )
+
+    history_result = _check_history(recent_messages or [], rule_settings)
+    if history_result:
+        return _debug_result(history_result, None)
+
+    if MOCKERY_RE.search(normalized):
+        return _debug_result(_violation("mockery", "найдена грубая насмешка"), None)
+
+    if PROVOCATION_RE.search(normalized):
+        return _debug_result(_violation("provocation", "найдена агрессивная провокация"), None)
+
+    return _debug_result(_no_violation(), None)
+
+
+def _has_personal_insult(normalized: str) -> bool:
+    checked_text = NEGATED_INSULT_RE.sub(" ", normalized)
+    if PERSONAL_INSULT_RE.search(checked_text) or RUDE_COMMAND_RE.search(checked_text):
+        return True
+    if EXTRA_INSULT_RE is not None:
+        words = re.findall(r"[а-яa-z0-9_]+", checked_text)
+        if len(words) <= 4 and EXTRA_INSULT_RE.search(checked_text):
+            return True
+        if re.search(rf"{WORD_LEFT}(?:ты|вы|он|она|они|этот|эта|эти){WORD_RIGHT}", checked_text):
+            if EXTRA_INSULT_RE.search(checked_text):
+                return True
+    if any(regex.search(checked_text) for _, regex in EXTRA_INSULT_RAW_RES):
+        return True
+
+    # Одно короткое сообщение вроде "Идиот!" обычно является прямым обращением.
+    words = re.findall(r"[а-яa-z0-9_]+", checked_text)
+    return len(words) <= 4 and EXTRA_INSULT_RE is not None and EXTRA_INSULT_RE.search(checked_text) is not None
+
+
+def _is_caps_aggression(text: str, settings: RuleSettings) -> bool:
+    stripped = text.strip()
+    if len(stripped) <= settings.caps_min_length:
+        return False
+
+    letters = [char for char in stripped if char.isalpha()]
+    if len(letters) < 8:
+        return False
+
+    uppercase = sum(1 for char in letters if char.isupper())
+    return uppercase / len(letters) >= settings.caps_ratio
+
+
+def _check_history(
+    recent_messages: list[dict[str, Any]],
+    settings: RuleSettings,
+) -> dict[str, Any] | None:
+    if not recent_messages:
+        return None
+
+    now = int(max(message.get("created_at", int(time())) for message in recent_messages))
+    window_start = now - settings.flood_time_window_seconds
+    in_window = [
+        message for message in recent_messages if int(message.get("created_at", 0)) >= window_start
+    ]
+    if len(in_window) >= settings.flood_messages_limit:
+        return _violation("flood", "слишком много сообщений за короткое время")
+
+    normalized_messages = [
+        str(message.get("normalized_text") or normalize_text(message.get("message_text", "")))
+        for message in recent_messages
+        if str(message.get("normalized_text") or normalize_text(message.get("message_text", "")))
+    ]
+    if len(normalized_messages) >= 3 and len(set(normalized_messages[-3:])) == 1:
+        return _violation("repeated_message", "три одинаковых сообщения подряд")
+
+    return None
+
+
+def _settings_from_config(settings: Any | None) -> RuleSettings:
+    if settings is None:
+        return RuleSettings()
+    return RuleSettings(
+        flood_messages_limit=int(getattr(settings, "flood_messages_limit", 5)),
+        flood_time_window_seconds=int(getattr(settings, "flood_time_window_seconds", 20)),
+        caps_min_length=int(getattr(settings, "caps_min_length", 15)),
+        caps_ratio=float(getattr(settings, "caps_ratio", 0.7)),
+    )
+
+
+def _profanity_violation() -> dict[str, Any]:
+    return {
+        "violation": True,
+        "category": "profanity",
+        "reason": "Мат или грубая обсценная лексика.",
+        "reply": PROFANITY_REPLY,
+    }
+
+
+def _violation(category: ViolationCategory, reason: str) -> dict[str, Any]:
+    return {
+        "violation": True,
+        "category": category,
+        "reason": reason,
+        "reply": get_reply(category),
+    }
+
+
+def _no_violation() -> dict[str, Any]:
+    return {
+        "violation": False,
+        "category": "none",
+        "reason": "",
+        "reply": "",
+    }
+
+
+def _debug_result(result: dict[str, Any], profanity_pattern: str | None) -> dict[str, Any]:
+    logger.debug(
+        "Moderation result: category=%s violation=%s profanity_pattern=%r",
+        result["category"],
+        result["violation"],
+        profanity_pattern,
+    )
+    return result

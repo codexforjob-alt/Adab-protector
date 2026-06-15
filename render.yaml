@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: adab-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: DATABASE_PATH
+        value: /tmp/adab_bot.sqlite3
+      - key: USER_COOLDOWN_SECONDS
+        value: "120"
+      - key: CHAT_COOLDOWN_SECONDS
+        value: "30"
+      - key: FLOOD_MESSAGES_LIMIT
+        value: "5"
+      - key: FLOOD_TIME_WINDOW_SECONDS
+        value: "20"
+      - key: CAPS_MIN_LENGTH
+        value: "15"
+      - key: CAPS_RATIO
+        value: "0.7"
+      - key: WEBHOOK_PATH
+        value: /telegram-webhook
+      - key: WEBHOOK_SECRET_TOKEN
+        sync: false
