@@ -8,17 +8,17 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
-from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import BotCommand, InlineKeyboardMarkup, Message
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 try:
     from .config import Config, load_config
-    from .keyboards import SETUP_INSTRUCTIONS_CALLBACK, start_keyboard
+    from .keyboards import start_keyboard
     from .rules import check_message, normalize_text
     from .storage import AdabStorage
 except ImportError:
     from config import Config, load_config
-    from keyboards import SETUP_INSTRUCTIONS_CALLBACK, start_keyboard
+    from keyboards import start_keyboard
     from rules import check_message, normalize_text
     from storage import AdabStorage
 
@@ -28,30 +28,42 @@ logger.setLevel(logging.DEBUG)
 
 GROUP_TYPES = {"group", "supergroup"}
 
-HELP_TEXT = (
-    "Я мягко напоминаю об адабе, когда вижу мат, угрозы, прямые оскорбления, "
-    "грубый капс, флуд или повторы. Религиозные споры и термины сами по себе "
-    "не оцениваю, ничего не удаляю, не баню и не мутю."
-)
+TASLIM_TEXT = "السلام عليكم ورحمة الله وبركاته"
 
-START_TEXT = """Ассаляму алейкум!
+START_TEXT = f"""{TASLIM_TEXT}
 
 Я бот для напоминания об адабе общения в чате.
+
 Я не удаляю сообщения, не баню и не решаю религиозные споры.
 Я только мягко напоминаю сохранять уважительный тон, если в чате появляются мат, оскорбления, угрозы, флуд или грубость.
 
 Чтобы я работал в группе:
 1. Добавьте меня в чат.
 2. Дайте мне право читать сообщения.
-3. Отключите Privacy Mode через @BotFather."""
 
-SETUP_INSTRUCTIONS_TEXT = """- Открой @BotFather
-- Выбери своего бота
-- Bot Settings
-- Group Privacy
-- Turn off
-- Добавь бота в группу
-- Проверь, что он видит сообщения"""
+Если нашли баг или хотите предложить улучшение - напишите: @AbuSidq"""
+
+HELP_TEXT = f"""{TASLIM_TEXT}
+
+Я помогаю сохранять адаб общения в чате.
+
+Что я отслеживаю:
+• мат и грубую речь;
+• личные оскорбления;
+• угрозы;
+• флуд и повторы;
+• агрессивный капс;
+• грубые провокации.
+
+Что я НЕ делаю:
+• не удаляю сообщения;
+• не баню и не мутю;
+• не решаю религиозные споры;
+• не оцениваю, кто прав.
+
+Я только мягко напоминаю участникам сохранять уважительный тон.
+
+Если нашли баг или хотите предложить улучшение - напишите: @AbuSidq"""
 
 
 def register_handlers(
@@ -71,12 +83,7 @@ def register_handlers(
             reply_markup=start_keyboard(bot_info.username or ""),
         )
 
-    @dp.callback_query(F.data == SETUP_INSTRUCTIONS_CALLBACK)
-    async def setup_instructions(callback: CallbackQuery) -> None:
-        await callback.answer()
-        if isinstance(callback.message, Message):
-            await callback.message.answer(SETUP_INSTRUCTIONS_TEXT, disable_notification=True)
-
+    @dp.message(Command("help"))
     @dp.message(Command("adab_help"))
     async def adab_help(message: Message) -> None:
         if _from_bot(message):
@@ -195,6 +202,7 @@ async def _set_commands(bot: Bot) -> None:
         await bot.set_my_commands(
             [
                 BotCommand(command="start", description="Приветствие и добавление в группу"),
+                BotCommand(command="help", description="Как работает бот адаба"),
                 BotCommand(command="adab_help", description="Как работает бот адаба"),
                 BotCommand(command="adab_status", description="Статус и предупреждения"),
             ]
