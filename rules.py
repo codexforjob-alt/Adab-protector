@@ -55,6 +55,14 @@ WORD_SPECIFIC_REPLIES = {
         "category": "vulgar_language",
         "reply": "Брат, давай без грубых и грязных слов. Сохраним адаб.",
     },
+    "писька": {
+        "category": "vulgar_language",
+        "reply": "Брат, давай без неприличных слов. Сохраним чистоту речи.",
+    },
+    "писка": {
+        "category": "vulgar_language",
+        "reply": "Брат, давай без неприличных слов. Сохраним чистоту речи.",
+    },
     "тряпка": {
         "category": "personal_insult",
         "reply": "Брат, давай без унизительных слов в адрес людей. Сохраним уважение.",
@@ -93,10 +101,17 @@ VULGAR_PATTERNS = [
     r"задниц[а-я]*",
     r"испражнен[а-я]*",
     r"испражнят[а-я]*",
+    r"какаш[а-я]*",
     r"кал[а-я]*",
     r"моч[а-я]*",
     r"пенис[а-я]*",
+    r"пис[ь]?к[а-я]*",
     r"полов[а-я]*\s+орган[а-я]*",
+    r"дроч[а-я]*",
+    r"минет[а-я]*",
+    r"отсос[а-я]*",
+    r"сосать",
+    r"сос[ие][а-я]*",
     r"секс[а-я]*",
     r"трах[а-я]*",
     r"фекал[а-я]*",
@@ -115,6 +130,7 @@ INSULT_PATTERNS = [
     r"ничтожество",
     r"имбецил[а-я]*",
     r"мраз[а-я]*",
+    r"конченн?[а-я]*",
     r"сук[аиуеой]*",
     r"суч[а-я]*",
     r"твар[а-я]*",
@@ -237,6 +253,54 @@ def _is_too_broad_external_regex(pattern: str) -> bool:
     return "[знпрво]?[ао]?е?б" in pattern
 
 
+def _is_vulgar_external_regex(pattern: str) -> bool:
+    vulgar_roots = (
+        "анус",
+        "вагин",
+        "говн",
+        "дроч",
+        "жоп",
+        "кал",
+        "минет",
+        "моч",
+        "отсос",
+        "пенис",
+        "сос",
+        "трах",
+        "фекал",
+        "член",
+    )
+    return any(root in pattern for root in vulgar_roots)
+
+
+def _is_vulgar_source_word(word: str) -> bool:
+    normalized = normalize_text(word)
+    vulgar_roots = (
+        "анус",
+        "вагин",
+        "влагалищ",
+        "говн",
+        "дерьм",
+        "дроч",
+        "жоп",
+        "задниц",
+        "испраж",
+        "какаш",
+        "кал",
+        "минет",
+        "моч",
+        "отсос",
+        "пенис",
+        "письк",
+        "писк",
+        "сосать",
+        "трах",
+        "фекал",
+        "член",
+    )
+    return any(root in normalized for root in vulgar_roots)
+
+
 def _load_extra_profanity_words() -> frozenset[str]:
     if not EXTRA_PROFANITY_WORDS_FILE.exists():
         return frozenset()
@@ -317,9 +381,37 @@ ADAB_BAD_WORDS = _load_adab_bad_words()
 PROFANITY_RES = _compile_word_patterns(PROFANITY_PATTERNS)
 VULGAR_RES = _compile_word_patterns(VULGAR_PATTERNS)
 EXTRA_PROFANITY_WORDS = _load_extra_profanity_words()
-EXTRA_PROFANITY_RES = _compile_extra_words(ADAB_BAD_WORDS["profanity_words"], suffix=True)
-EXTRA_PROFANITY_RAW_RES = _compile_raw_regexes(ADAB_BAD_WORDS["profanity_regexes"])
-EXTRA_VULGAR_RES = _compile_extra_words(ADAB_BAD_WORDS["vulgar_words"], suffix=True)
+EXTRA_PROFANITY_RES = _compile_extra_words(
+    {
+        word
+        for word in ADAB_BAD_WORDS["profanity_words"]
+        if not _is_vulgar_source_word(word)
+    },
+    suffix=True,
+)
+EXTRA_PROFANITY_RAW_RES = _compile_raw_regexes(
+    {
+        pattern
+        for pattern in ADAB_BAD_WORDS["profanity_regexes"]
+        if not _is_vulgar_external_regex(pattern)
+    }
+)
+EXTRA_VULGAR_RES = _compile_extra_words(
+    ADAB_BAD_WORDS["vulgar_words"]
+    | {
+        word
+        for word in ADAB_BAD_WORDS["profanity_words"]
+        if _is_vulgar_source_word(word)
+    },
+    suffix=True,
+)
+EXTRA_VULGAR_RAW_RES = _compile_raw_regexes(
+    {
+        pattern
+        for pattern in ADAB_BAD_WORDS["profanity_regexes"]
+        if _is_vulgar_external_regex(pattern)
+    }
+)
 EXTRA_INSULT_RE = _compile_optional_word_pattern(
     INSULT_PATTERNS
     + [_word_or_phrase_pattern(word) for word in ADAB_BAD_WORDS["insult_words"]]
@@ -384,6 +476,9 @@ def check_vulgar_language(normalized: str) -> str | None:
     for pattern, regex in EXTRA_VULGAR_RES:
         if regex.search(normalized):
             return f"{ADAB_BAD_WORDS_FILE.name}:{pattern}"
+    for pattern, regex in EXTRA_VULGAR_RAW_RES:
+        if regex.search(normalized):
+            return f"{ADAB_BAD_WORDS_FILE.name}:{pattern}"
 
     for word in re.findall(r"[а-яa-z]+", normalized):
         if word in EXTRA_PROFANITY_WORDS and _is_vulgar_word(word):
@@ -401,35 +496,19 @@ def check_message(
 ) -> dict[str, Any]:
     original_text = text or ""
     normalized = normalize_text(original_text)
+    def finish(result: dict[str, Any], matched: str | None) -> dict[str, Any]:
+        return _debug_result(result, matched, original_text, normalized)
+
     logger.debug("Moderation input: original=%r normalized=%r", original_text, normalized)
     if not normalized:
-        return _debug_result(_no_violation(), None)
-
-    specific_result = check_word_specific(normalized)
-    if specific_result is not None:
-        result = _specific_violation(specific_result, user_id, chat_id)
-        return _debug_result(result, str(specific_result["word"]))
-
-    profanity_pattern = check_profanity(normalized)
-    if profanity_pattern:
-        logger.debug("Moderation profanity pattern: %s", profanity_pattern)
-        return _debug_result(_profanity_violation(user_id, chat_id), profanity_pattern)
-
-    vulgar_pattern = check_vulgar_language(normalized)
-    if vulgar_pattern:
-        logger.debug("Moderation vulgar pattern: %s", vulgar_pattern)
-        return _debug_result(
-            _violation(
-                "vulgar_language",
-                "грубая или неуместная лексика",
-                user_id,
-                chat_id,
-            ),
-            vulgar_pattern,
-        )
+        return finish(_no_violation(), None)
 
     if _has_personal_insult(normalized):
-        return _debug_result(
+        specific_result = check_word_specific(normalized)
+        if specific_result is not None and specific_result["category"] == "personal_insult":
+            result = _specific_violation(specific_result, user_id, chat_id)
+            return finish(result, str(specific_result["word"]))
+        return finish(
             _violation(
                 "personal_insult",
                 "найдено прямое личное оскорбление",
@@ -439,12 +518,35 @@ def check_message(
             None,
         )
 
+    profanity_pattern = check_profanity(normalized)
+    if profanity_pattern:
+        logger.debug("Moderation profanity pattern: %s", profanity_pattern)
+        return finish(_profanity_violation(user_id, chat_id), profanity_pattern)
+
+    specific_result = check_word_specific(normalized)
+    if specific_result is not None:
+        result = _specific_violation(specific_result, user_id, chat_id)
+        return finish(result, str(specific_result["word"]))
+
+    vulgar_pattern = check_vulgar_language(normalized)
+    if vulgar_pattern:
+        logger.debug("Moderation vulgar pattern: %s", vulgar_pattern)
+        return finish(
+            _violation(
+                "vulgar_language",
+                "грубая или неуместная лексика",
+                user_id,
+                chat_id,
+            ),
+            vulgar_pattern,
+        )
+
     if THREAT_RE.search(normalized):
-        return _debug_result(_violation("threat", "найдена прямая угроза", user_id, chat_id), None)
+        return finish(_violation("threat", "найдена прямая угроза", user_id, chat_id), None)
 
     rule_settings = _settings_from_config(settings)
     if _is_caps_aggression(original_text, rule_settings):
-        return _debug_result(
+        return finish(
             _violation(
                 "spam_caps",
                 "слишком много букв в верхнем регистре",
@@ -456,25 +558,27 @@ def check_message(
 
     history_result = _check_history(recent_messages or [], rule_settings, user_id, chat_id)
     if history_result:
-        return _debug_result(history_result, None)
+        return finish(history_result, None)
 
     if MOCKERY_RE.search(normalized):
-        return _debug_result(
+        return finish(
             _violation("mockery", "найдена грубая насмешка", user_id, chat_id),
             None,
         )
 
     if PROVOCATION_RE.search(normalized):
-        return _debug_result(
+        return finish(
             _violation("provocation", "найдена агрессивная провокация", user_id, chat_id),
             None,
         )
 
-    return _debug_result(_no_violation(), None)
+    return finish(_no_violation(), None)
 
 
 def _has_personal_insult(normalized: str) -> bool:
     checked_text = NEGATED_INSULT_RE.sub(" ", normalized)
+    if _word_or_phrase_matches("тряпка", checked_text):
+        return _is_personal_context(checked_text)
     if PERSONAL_INSULT_RE.search(checked_text) or RUDE_COMMAND_RE.search(checked_text):
         return True
     if EXTRA_INSULT_RE is not None:
@@ -497,6 +601,11 @@ def _is_personal_context(normalized: str) -> bool:
         rf"{WORD_LEFT}(?:ты|вы|он|она|они|этот|эта|эти|твой|твоя|твои){WORD_RIGHT}",
         normalized,
     ) is not None
+
+
+def _word_or_phrase_matches(word: str, normalized: str) -> bool:
+    pattern = _word_or_phrase_pattern(word, suffix=False)
+    return bool(pattern and re.search(f"{WORD_LEFT}(?:{pattern}){WORD_RIGHT}", normalized, re.IGNORECASE))
 
 
 def _is_vulgar_word(word: str) -> bool:
@@ -623,12 +732,55 @@ def _no_violation() -> dict[str, Any]:
     }
 
 
-def _debug_result(result: dict[str, Any], profanity_pattern: str | None) -> dict[str, Any]:
+def _debug_result(
+    result: dict[str, Any],
+    matched: str | None,
+    original_text: str = "",
+    normalized: str = "",
+) -> dict[str, Any]:
     logger.debug(
         "Moderation result: category=%s violation=%s matched=%r reply=%r",
         result["category"],
         result["violation"],
-        profanity_pattern,
+        matched,
         result["reply"],
     )
+    print(
+        "[MODERATION]",
+        {
+            "original": original_text,
+            "normalized": normalized,
+            "matched_word": matched if matched and not any(char in matched for char in r"\[]()*+?") else None,
+            "matched_pattern": matched if matched and any(char in matched for char in r"\[]()*+?") else None,
+            "category": result["category"],
+            "reply": result["reply"],
+        },
+    )
     return result
+
+
+def _run_manual_check() -> None:
+    samples = [
+        "Писька",
+        "Дрочил",
+        "Половой орган",
+        "Моча",
+        "Говно",
+        "Калл",
+        "Тупой",
+        "Идиот",
+    ]
+    for index, sample in enumerate(samples, start=1):
+        result = check_message(sample, user_id=1, chat_id=10_000 + index)
+        print(
+            {
+                "text": sample,
+                "category": result["category"],
+                "violation": result["violation"],
+                "reply": result["reply"],
+            }
+        )
+
+
+if __name__ == "__main__":
+    _run_manual_check()
