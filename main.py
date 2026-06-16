@@ -231,7 +231,7 @@ async def _run_webhook(config: Config) -> None:
     webhook_url = f"{config.webhook_base_url}{config.webhook_path}"
 
     async def health(_: web.Request) -> web.Response:
-        return web.Response(text="Adab bot is running")
+        return web.json_response({"status": "ok"})
 
     async def on_startup(_: web.Application) -> None:
         await storage.connect()

@@ -142,7 +142,7 @@ python -m adab_bot.main
    - `WEBHOOK_PATH=/telegram-webhook`;
    - `WEBHOOK_SECRET_TOKEN` - любая длинная случайная строка без пробелов.
 6. Нажмите `Deploy`.
-7. После успешного запуска откройте URL сервиса Render. На `/health` должно быть `Adab bot is running`.
+7. После успешного запуска откройте URL сервиса Render. На `/health` должно быть `{"status":"ok"}`.
 
 Не добавляйте `.env` и локальные базы SQLite в GitHub. Для Render используйте только переменные окружения в Dashboard.
 
