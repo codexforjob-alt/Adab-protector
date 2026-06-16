@@ -34,6 +34,33 @@ class RuleSettings:
 
 
 # Редактируемые локальные списки. Profanity проверяется первым.
+WORD_SPECIFIC_REPLIES = {
+    "половой орган": {
+        "category": "vulgar_language",
+        "reply": "Брат, давай без неприличных выражений. Сохраним чистоту речи.",
+    },
+    "моча": {
+        "category": "vulgar_language",
+        "reply": "Давайте не засорять чат такими словами. Пусть речь будет приличной.",
+    },
+    "кал": {
+        "category": "vulgar_language",
+        "reply": "Брат, лучше избегать грязных слов в общем чате.",
+    },
+    "калл": {
+        "category": "vulgar_language",
+        "reply": "Брат, лучше избегать грязных слов в общем чате.",
+    },
+    "говно": {
+        "category": "vulgar_language",
+        "reply": "Брат, давай без грубых и грязных слов. Сохраним адаб.",
+    },
+    "тряпка": {
+        "category": "personal_insult",
+        "reply": "Брат, давай без унизительных слов в адрес людей. Сохраним уважение.",
+    },
+}
+
 PROFANITY_PATTERNS = [
     r"н\s*а\s*х\s*у\s*[ийеюя][а-я]*",
     r"п\s*о\s*х\s*у\s*[ийеюя][а-я]*",
@@ -57,17 +84,23 @@ PROFANITY_PATTERNS = [
 ]
 
 VULGAR_PATTERNS = [
-    r"сук[аиуеой]*",
-    r"суч[а-я]*",
-    r"мраз[а-я]*",
-    r"пид[ао]р[а-я]*",
-    r"гандон[а-я]*",
-    r"шлюх[а-я]*",
-    r"дроч[а-я]*",
+    r"анус[а-я]*",
+    r"вагин[а-я]*",
+    r"влагалищ[а-я]*",
+    r"говн[а-я]*",
+    r"дерьм[а-я]*",
+    r"жоп[а-я]*",
+    r"задниц[а-я]*",
+    r"испражнен[а-я]*",
+    r"испражнят[а-я]*",
+    r"кал[а-я]*",
+    r"моч[а-я]*",
+    r"пенис[а-я]*",
+    r"полов[а-я]*\s+орган[а-я]*",
+    r"секс[а-я]*",
     r"трах[а-я]*",
-    r"отсос[а-я]*",
-    r"сос[ие][а-я]*",
-    r"минет[а-я]*",
+    r"фекал[а-я]*",
+    r"член[а-я]*",
 ]
 
 INSULT_PATTERNS = [
@@ -81,6 +114,12 @@ INSULT_PATTERNS = [
     r"безмозгл[а-я]*",
     r"ничтожество",
     r"имбецил[а-я]*",
+    r"мраз[а-я]*",
+    r"сук[аиуеой]*",
+    r"суч[а-я]*",
+    r"твар[а-я]*",
+    r"урод[а-я]*",
+    r"чмо",
 ]
 
 RUDE_COMMAND_PATTERNS = [
@@ -220,6 +259,7 @@ def _empty_sections() -> dict[str, set[str]]:
     return {
         "profanity_words": set(),
         "profanity_regexes": set(),
+        "vulgar_words": set(),
         "insult_words": set(),
         "insult_regexes": set(),
         "rude_commands": set(),
@@ -247,8 +287,10 @@ def _load_adab_bad_words() -> dict[str, set[str]]:
             current_section = line.strip("[]").upper()
             continue
 
-        if current_section in {"PROFANITY_ROOTS", "VULGAR_SEXUAL_WORDS"}:
+        if current_section == "PROFANITY_ROOTS":
             sections["profanity_words"].add(line)
+        elif current_section == "VULGAR_SEXUAL_WORDS":
+            sections["vulgar_words"].add(line)
         elif current_section == "PERSONAL_INSULTS":
             sections["insult_words"].add(line)
         elif current_section == "RUDE_COMMANDS":
@@ -261,9 +303,10 @@ def _load_adab_bad_words() -> dict[str, set[str]]:
             sections["insult_regexes"].add(line)
 
     logger.info(
-        "Loaded adab bad words from %s: profanity=%s insults=%s threats=%s",
+        "Loaded adab bad words from %s: profanity=%s vulgar=%s insults=%s threats=%s",
         ADAB_BAD_WORDS_FILE,
         len(sections["profanity_words"]) + len(sections["profanity_regexes"]),
+        len(sections["vulgar_words"]),
         len(sections["insult_words"]) + len(sections["insult_regexes"]),
         len(sections["threat_words"]),
     )
@@ -271,10 +314,12 @@ def _load_adab_bad_words() -> dict[str, set[str]]:
 
 
 ADAB_BAD_WORDS = _load_adab_bad_words()
-PROFANITY_RES = _compile_word_patterns(PROFANITY_PATTERNS + VULGAR_PATTERNS)
+PROFANITY_RES = _compile_word_patterns(PROFANITY_PATTERNS)
+VULGAR_RES = _compile_word_patterns(VULGAR_PATTERNS)
 EXTRA_PROFANITY_WORDS = _load_extra_profanity_words()
 EXTRA_PROFANITY_RES = _compile_extra_words(ADAB_BAD_WORDS["profanity_words"], suffix=True)
 EXTRA_PROFANITY_RAW_RES = _compile_raw_regexes(ADAB_BAD_WORDS["profanity_regexes"])
+EXTRA_VULGAR_RES = _compile_extra_words(ADAB_BAD_WORDS["vulgar_words"], suffix=True)
 EXTRA_INSULT_RE = _compile_optional_word_pattern(
     INSULT_PATTERNS
     + [_word_or_phrase_pattern(word) for word in ADAB_BAD_WORDS["insult_words"]]
@@ -300,6 +345,20 @@ PERSONAL_INSULT_RE = re.compile(
 )
 
 
+def check_word_specific(normalized: str) -> dict[str, Any] | None:
+    for word, data in WORD_SPECIFIC_REPLIES.items():
+        pattern = _word_or_phrase_pattern(word, suffix=False)
+        if pattern and re.search(f"{WORD_LEFT}(?:{pattern}){WORD_RIGHT}", normalized, re.IGNORECASE):
+            if word == "тряпка" and not _is_personal_context(normalized):
+                continue
+            return {
+                "word": word,
+                "category": data["category"],
+                "reply": data["reply"],
+            }
+    return None
+
+
 def check_profanity(normalized: str) -> str | None:
     for pattern, regex in PROFANITY_RES:
         if regex.search(normalized):
@@ -312,7 +371,22 @@ def check_profanity(normalized: str) -> str | None:
             return f"{ADAB_BAD_WORDS_FILE.name}:{pattern}"
 
     for word in re.findall(r"[а-яa-z]+", normalized):
-        if word in EXTRA_PROFANITY_WORDS:
+        if word in EXTRA_PROFANITY_WORDS and not _is_vulgar_word(word):
+            return f"words.txt:{word}"
+
+    return None
+
+
+def check_vulgar_language(normalized: str) -> str | None:
+    for pattern, regex in VULGAR_RES:
+        if regex.search(normalized):
+            return pattern
+    for pattern, regex in EXTRA_VULGAR_RES:
+        if regex.search(normalized):
+            return f"{ADAB_BAD_WORDS_FILE.name}:{pattern}"
+
+    for word in re.findall(r"[а-яa-z]+", normalized):
+        if word in EXTRA_PROFANITY_WORDS and _is_vulgar_word(word):
             return f"words.txt:{word}"
 
     return None
@@ -331,13 +405,28 @@ def check_message(
     if not normalized:
         return _debug_result(_no_violation(), None)
 
+    specific_result = check_word_specific(normalized)
+    if specific_result is not None:
+        result = _specific_violation(specific_result, user_id, chat_id)
+        return _debug_result(result, str(specific_result["word"]))
+
     profanity_pattern = check_profanity(normalized)
     if profanity_pattern:
         logger.debug("Moderation profanity pattern: %s", profanity_pattern)
         return _debug_result(_profanity_violation(user_id, chat_id), profanity_pattern)
 
-    if THREAT_RE.search(normalized):
-        return _debug_result(_violation("threat", "найдена прямая угроза", user_id, chat_id), None)
+    vulgar_pattern = check_vulgar_language(normalized)
+    if vulgar_pattern:
+        logger.debug("Moderation vulgar pattern: %s", vulgar_pattern)
+        return _debug_result(
+            _violation(
+                "vulgar_language",
+                "грубая или неуместная лексика",
+                user_id,
+                chat_id,
+            ),
+            vulgar_pattern,
+        )
 
     if _has_personal_insult(normalized):
         return _debug_result(
@@ -349,6 +438,9 @@ def check_message(
             ),
             None,
         )
+
+    if THREAT_RE.search(normalized):
+        return _debug_result(_violation("threat", "найдена прямая угроза", user_id, chat_id), None)
 
     rule_settings = _settings_from_config(settings)
     if _is_caps_aggression(original_text, rule_settings):
@@ -398,6 +490,34 @@ def _has_personal_insult(normalized: str) -> bool:
     # Одно короткое сообщение вроде "Идиот!" обычно является прямым обращением.
     words = re.findall(r"[а-яa-z0-9_]+", checked_text)
     return len(words) <= 4 and EXTRA_INSULT_RE is not None and EXTRA_INSULT_RE.search(checked_text) is not None
+
+
+def _is_personal_context(normalized: str) -> bool:
+    return re.search(
+        rf"{WORD_LEFT}(?:ты|вы|он|она|они|этот|эта|эти|твой|твоя|твои){WORD_RIGHT}",
+        normalized,
+    ) is not None
+
+
+def _is_vulgar_word(word: str) -> bool:
+    return any(regex.search(word) for _, regex in VULGAR_RES) or word in {
+        "анус",
+        "вагина",
+        "влагалище",
+        "говно",
+        "говнецо",
+        "дерьмо",
+        "жопа",
+        "задница",
+        "испражнение",
+        "кал",
+        "моча",
+        "пенис",
+        "фекал",
+        "фекалий",
+        "фекалии",
+        "член",
+    }
 
 
 def _is_caps_aggression(text: str, settings: RuleSettings) -> bool:
@@ -466,6 +586,20 @@ def _profanity_violation(user_id: int, chat_id: int) -> dict[str, Any]:
     }
 
 
+def _specific_violation(
+    specific_result: dict[str, Any],
+    user_id: int,
+    chat_id: int,
+) -> dict[str, Any]:
+    del user_id, chat_id
+    return {
+        "violation": True,
+        "category": str(specific_result["category"]),
+        "reason": f"Найдено точечное слово или фраза: {specific_result['word']}.",
+        "reply": str(specific_result["reply"]),
+    }
+
+
 def _violation(
     category: ViolationCategory,
     reason: str,
@@ -491,9 +625,10 @@ def _no_violation() -> dict[str, Any]:
 
 def _debug_result(result: dict[str, Any], profanity_pattern: str | None) -> dict[str, Any]:
     logger.debug(
-        "Moderation result: category=%s violation=%s profanity_pattern=%r",
+        "Moderation result: category=%s violation=%s matched=%r reply=%r",
         result["category"],
         result["violation"],
         profanity_pattern,
+        result["reply"],
     )
     return result
