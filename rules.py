@@ -21,9 +21,6 @@ ViolationCategory = str
 WORD_LEFT = r"(?<![а-яa-z0-9_])"
 WORD_RIGHT = r"(?![а-яa-z0-9_])"
 
-PROFANITY_REPLY = (
-    "Брат, побойся Аллаха, давай без мата и грубости. Сохраним уважительный тон."
-)
 EXTRA_PROFANITY_WORDS_FILE = Path(__file__).with_name("words.txt")
 ADAB_BAD_WORDS_FILE = Path(__file__).with_name("adab_bad_words_ru.txt")
 
@@ -36,10 +33,7 @@ class RuleSettings:
     caps_ratio: float = 0.7
 
 
-RELIGIOUS_WHITELIST: list[str] = []
-
-# Редактируемые локальные списки. Profanity проверяется первым и не отменяется
-# религиозным whitelist.
+# Редактируемые локальные списки. Profanity проверяется первым.
 PROFANITY_PATTERNS = [
     r"н\s*а\s*х\s*у\s*[ийеюя][а-я]*",
     r"п\s*о\s*х\s*у\s*[ийеюя][а-я]*",
@@ -88,8 +82,6 @@ INSULT_PATTERNS = [
     r"ничтожество",
     r"имбецил[а-я]*",
 ]
-
-RELIGIOUS_ATTACK_TERMS: list[str] = []
 
 RUDE_COMMAND_PATTERNS = [
     r"заткнись",
@@ -333,7 +325,6 @@ def check_message(
     recent_messages: list[dict[str, Any]] | None = None,
     settings: Any | None = None,
 ) -> dict[str, Any]:
-    del user_id, chat_id
     original_text = text or ""
     normalized = normalize_text(original_text)
     logger.debug("Moderation input: original=%r normalized=%r", original_text, normalized)
@@ -343,33 +334,49 @@ def check_message(
     profanity_pattern = check_profanity(normalized)
     if profanity_pattern:
         logger.debug("Moderation profanity pattern: %s", profanity_pattern)
-        return _debug_result(_profanity_violation(), profanity_pattern)
+        return _debug_result(_profanity_violation(user_id, chat_id), profanity_pattern)
 
     if THREAT_RE.search(normalized):
-        return _debug_result(_violation("threat", "найдена прямая угроза"), None)
+        return _debug_result(_violation("threat", "найдена прямая угроза", user_id, chat_id), None)
 
     if _has_personal_insult(normalized):
         return _debug_result(
-            _violation("personal_insult", "найдено прямое личное оскорбление"),
+            _violation(
+                "personal_insult",
+                "найдено прямое личное оскорбление",
+                user_id,
+                chat_id,
+            ),
             None,
         )
 
     rule_settings = _settings_from_config(settings)
     if _is_caps_aggression(original_text, rule_settings):
         return _debug_result(
-            _violation("spam_caps", "слишком много букв в верхнем регистре"),
+            _violation(
+                "spam_caps",
+                "слишком много букв в верхнем регистре",
+                user_id,
+                chat_id,
+            ),
             None,
         )
 
-    history_result = _check_history(recent_messages or [], rule_settings)
+    history_result = _check_history(recent_messages or [], rule_settings, user_id, chat_id)
     if history_result:
         return _debug_result(history_result, None)
 
     if MOCKERY_RE.search(normalized):
-        return _debug_result(_violation("mockery", "найдена грубая насмешка"), None)
+        return _debug_result(
+            _violation("mockery", "найдена грубая насмешка", user_id, chat_id),
+            None,
+        )
 
     if PROVOCATION_RE.search(normalized):
-        return _debug_result(_violation("provocation", "найдена агрессивная провокация"), None)
+        return _debug_result(
+            _violation("provocation", "найдена агрессивная провокация", user_id, chat_id),
+            None,
+        )
 
     return _debug_result(_no_violation(), None)
 
@@ -409,6 +416,8 @@ def _is_caps_aggression(text: str, settings: RuleSettings) -> bool:
 def _check_history(
     recent_messages: list[dict[str, Any]],
     settings: RuleSettings,
+    user_id: int,
+    chat_id: int,
 ) -> dict[str, Any] | None:
     if not recent_messages:
         return None
@@ -419,7 +428,7 @@ def _check_history(
         message for message in recent_messages if int(message.get("created_at", 0)) >= window_start
     ]
     if len(in_window) >= settings.flood_messages_limit:
-        return _violation("flood", "слишком много сообщений за короткое время")
+        return _violation("flood", "слишком много сообщений за короткое время", user_id, chat_id)
 
     normalized_messages = [
         str(message.get("normalized_text") or normalize_text(message.get("message_text", "")))
@@ -427,7 +436,12 @@ def _check_history(
         if str(message.get("normalized_text") or normalize_text(message.get("message_text", "")))
     ]
     if len(normalized_messages) >= 3 and len(set(normalized_messages[-3:])) == 1:
-        return _violation("repeated_message", "три одинаковых сообщения подряд")
+        return _violation(
+            "repeated_message",
+            "три одинаковых сообщения подряд",
+            user_id,
+            chat_id,
+        )
 
     return None
 
@@ -443,21 +457,26 @@ def _settings_from_config(settings: Any | None) -> RuleSettings:
     )
 
 
-def _profanity_violation() -> dict[str, Any]:
+def _profanity_violation(user_id: int, chat_id: int) -> dict[str, Any]:
     return {
         "violation": True,
         "category": "profanity",
         "reason": "Мат или грубая обсценная лексика.",
-        "reply": PROFANITY_REPLY,
+        "reply": get_reply("profanity", user_id=user_id, chat_id=chat_id),
     }
 
 
-def _violation(category: ViolationCategory, reason: str) -> dict[str, Any]:
+def _violation(
+    category: ViolationCategory,
+    reason: str,
+    user_id: int,
+    chat_id: int,
+) -> dict[str, Any]:
     return {
         "violation": True,
         "category": category,
         "reason": reason,
-        "reply": get_reply(category),
+        "reply": get_reply(category, user_id=user_id, chat_id=chat_id),
     }
 
 
