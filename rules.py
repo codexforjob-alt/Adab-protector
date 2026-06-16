@@ -33,7 +33,7 @@ class RuleSettings:
     caps_ratio: float = 0.7
 
 
-# Редактируемые локальные списки. Profanity проверяется первым.
+# Редактируемые локальные списки. Vulgar/word-specific проверяются до profanity, чтобы не писать 'без мата' на не-мат.
 WORD_SPECIFIC_REPLIES = {
     "половой орган": {
         "category": "vulgar_language",
@@ -62,6 +62,34 @@ WORD_SPECIFIC_REPLIES = {
     "писка": {
         "category": "vulgar_language",
         "reply": "Брат, давай без неприличных слов. Сохраним чистоту речи.",
+    },
+    "дрочил": {
+        "category": "vulgar_language",
+        "reply": "Брат, давай без неприличных слов. Сохраним чистоту речи.",
+    },
+    "дрочить": {
+        "category": "vulgar_language",
+        "reply": "Брат, давай без неприличных слов. Сохраним чистоту речи.",
+    },
+    "дрочка": {
+        "category": "vulgar_language",
+        "reply": "Брат, давай без неприличных слов. Сохраним чистоту речи.",
+    },
+    "член": {
+        "category": "vulgar_language",
+        "reply": "Брат, давай без неприличных выражений. Сохраним чистоту речи.",
+    },
+    "пенис": {
+        "category": "vulgar_language",
+        "reply": "Брат, давай без неприличных выражений. Сохраним чистоту речи.",
+    },
+    "жопа": {
+        "category": "vulgar_language",
+        "reply": "Брат, лучше избегать грубых слов в общем чате.",
+    },
+    "задница": {
+        "category": "vulgar_language",
+        "reply": "Брат, лучше избегать грубых слов в общем чате.",
     },
     "тряпка": {
         "category": "personal_insult",
@@ -452,6 +480,23 @@ def check_word_specific(normalized: str) -> dict[str, Any] | None:
 
 
 def check_profanity(normalized: str) -> str | None:
+    # Защита от ложного "profanity":
+    # если слово/фраза явно отнесены к vulgar_language, check_profanity не должен срабатывать.
+    specific = check_word_specific(normalized)
+    if specific is not None and specific.get("category") == "vulgar_language":
+        return None
+
+    # Если vulgar-паттерн уже нашёл слово, это не мат, а category="vulgar_language".
+    for pattern, regex in VULGAR_RES:
+        if regex.search(normalized):
+            return None
+    for pattern, regex in EXTRA_VULGAR_RES:
+        if regex.search(normalized):
+            return None
+    for pattern, regex in EXTRA_VULGAR_RAW_RES:
+        if regex.search(normalized):
+            return None
+
     for pattern, regex in PROFANITY_RES:
         if regex.search(normalized):
             return pattern
@@ -496,6 +541,7 @@ def check_message(
 ) -> dict[str, Any]:
     original_text = text or ""
     normalized = normalize_text(original_text)
+
     def finish(result: dict[str, Any], matched: str | None) -> dict[str, Any]:
         return _debug_result(result, matched, original_text, normalized)
 
@@ -503,11 +549,15 @@ def check_message(
     if not normalized:
         return finish(_no_violation(), None)
 
+    # 1) Точечные слова/фразы проверяем первыми.
+    # Это нужно, чтобы "писька", "дрочил", "говно", "моча", "кал" не уходили в profanity.
+    specific_result = check_word_specific(normalized)
+    if specific_result is not None:
+        result = _specific_violation(specific_result, user_id, chat_id)
+        return finish(result, str(specific_result["word"]))
+
+    # 2) Личные оскорбления отдельно.
     if _has_personal_insult(normalized):
-        specific_result = check_word_specific(normalized)
-        if specific_result is not None and specific_result["category"] == "personal_insult":
-            result = _specific_violation(specific_result, user_id, chat_id)
-            return finish(result, str(specific_result["word"]))
         return finish(
             _violation(
                 "personal_insult",
@@ -518,28 +568,26 @@ def check_message(
             None,
         )
 
-    profanity_pattern = check_profanity(normalized)
-    if profanity_pattern:
-        logger.debug("Moderation profanity pattern: %s", profanity_pattern)
-        return finish(_profanity_violation(user_id, chat_id), profanity_pattern)
-
-    specific_result = check_word_specific(normalized)
-    if specific_result is not None:
-        result = _specific_violation(specific_result, user_id, chat_id)
-        return finish(result, str(specific_result["word"]))
-
+    # 3) Неприличные/грязные слова, но не мат.
+    # Должно идти ДО profanity, чтобы бот не писал "без мата" на vulgar_language.
     vulgar_pattern = check_vulgar_language(normalized)
     if vulgar_pattern:
         logger.debug("Moderation vulgar pattern: %s", vulgar_pattern)
         return finish(
             _violation(
                 "vulgar_language",
-                "грубая или неуместная лексика",
+                "грубая или неуместная лексика, но не мат",
                 user_id,
                 chat_id,
             ),
             vulgar_pattern,
         )
+
+    # 4) Настоящий мат.
+    profanity_pattern = check_profanity(normalized)
+    if profanity_pattern:
+        logger.debug("Moderation profanity pattern: %s", profanity_pattern)
+        return finish(_profanity_violation(user_id, chat_id), profanity_pattern)
 
     if THREAT_RE.search(normalized):
         return finish(_violation("threat", "найдена прямая угроза", user_id, chat_id), None)
