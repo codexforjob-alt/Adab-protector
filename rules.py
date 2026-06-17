@@ -409,6 +409,9 @@ ADAB_BAD_WORDS = _load_adab_bad_words()
 PROFANITY_RES = _compile_word_patterns(PROFANITY_PATTERNS)
 VULGAR_RES = _compile_word_patterns(VULGAR_PATTERNS)
 EXTRA_PROFANITY_WORDS = _load_extra_profanity_words()
+ADAB_INSULT_PATTERNS = [_word_or_phrase_pattern(word) for word in ADAB_BAD_WORDS["insult_words"]]
+ALL_INSULT_PATTERNS = [pattern for pattern in INSULT_PATTERNS + ADAB_INSULT_PATTERNS if pattern]
+INSULT_PATTERN_GROUP = "|".join(f"(?:{pattern})" for pattern in ALL_INSULT_PATTERNS)
 EXTRA_PROFANITY_RES = _compile_extra_words(
     {
         word
@@ -440,10 +443,7 @@ EXTRA_VULGAR_RAW_RES = _compile_raw_regexes(
         if _is_vulgar_external_regex(pattern)
     }
 )
-EXTRA_INSULT_RE = _compile_optional_word_pattern(
-    INSULT_PATTERNS
-    + [_word_or_phrase_pattern(word) for word in ADAB_BAD_WORDS["insult_words"]]
-)
+EXTRA_INSULT_RE = _compile_optional_word_pattern(ALL_INSULT_PATTERNS)
 EXTRA_INSULT_RAW_RES = _compile_raw_regexes(ADAB_BAD_WORDS["insult_regexes"])
 RUDE_COMMAND_RE = _compile_word_pattern(
     RUDE_COMMAND_PATTERNS + [_word_or_phrase_pattern(word, suffix=False) for word in ADAB_BAD_WORDS["rude_commands"]]
@@ -454,22 +454,44 @@ THREAT_RE = _compile_word_pattern(
 MOCKERY_RE = _compile_word_pattern(MOCKERY_PATTERNS)
 PROVOCATION_RE = _compile_word_pattern(PROVOCATION_PATTERNS)
 NEGATED_INSULT_RE = re.compile(
-    rf"{WORD_LEFT}не\s+(?:{'|'.join(f'(?:{pattern})' for pattern in INSULT_PATTERNS)}){WORD_RIGHT}",
+    rf"{WORD_LEFT}не\s+(?:{INSULT_PATTERN_GROUP}){WORD_RIGHT}",
     re.IGNORECASE,
 )
 PERSONAL_INSULT_RE = re.compile(
-    rf"{WORD_LEFT}(?:ты|вы|он|она|они|этот|эта|эти)"
+    rf"{WORD_LEFT}(?:ты|вы|тебя|тебе|тобой|вас|вам|вами|твой|твоя|твои|ваш|ваша|ваши)"
     rf"(?:\s+[а-яa-z0-9_]+){{0,4}}\s+"
-    rf"(?:{'|'.join(f'(?:{pattern})' for pattern in INSULT_PATTERNS)}){WORD_RIGHT}",
+    rf"(?:{INSULT_PATTERN_GROUP}){WORD_RIGHT}",
     re.IGNORECASE,
 )
+REVERSE_PERSONAL_INSULT_RE = re.compile(
+    rf"{WORD_LEFT}(?:{INSULT_PATTERN_GROUP})"
+    rf"(?:\s+[а-яa-z0-9_]+){{0,2}}\s+"
+    rf"(?:ты|вы|тебя|вас){WORD_RIGHT}",
+    re.IGNORECASE,
+)
+SAFE_INSULT_REFERENCE_RES = [
+    re.compile(
+        rf"{WORD_LEFT}(?:слово|термин|выражение)\s+(?:{INSULT_PATTERN_GROUP}){WORD_RIGHT}",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"{WORD_LEFT}(?:не\s+говори|не\s+пиши)\s+(?:{INSULT_PATTERN_GROUP}){WORD_RIGHT}",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"{WORD_LEFT}нельзя\s+(?:говорить|писать|употреблять)\s+(?:{INSULT_PATTERN_GROUP}){WORD_RIGHT}",
+        re.IGNORECASE,
+    ),
+]
 
 
 def check_word_specific(normalized: str) -> dict[str, Any] | None:
     for word, data in WORD_SPECIFIC_REPLIES.items():
         pattern = _word_or_phrase_pattern(word, suffix=False)
         if pattern and re.search(f"{WORD_LEFT}(?:{pattern}){WORD_RIGHT}", normalized, re.IGNORECASE):
-            if word == "тряпка" and not _is_personal_context(normalized):
+            if word == "тряпка" and not (
+                _is_personal_context(normalized) or _is_isolated_word(normalized, word)
+            ):
                 continue
             return {
                 "word": word,
@@ -532,6 +554,46 @@ def check_vulgar_language(normalized: str) -> str | None:
     return None
 
 
+def check_personal_insult(normalized: str) -> str | None:
+    checked_text = _clean_insult_text(normalized)
+    if not checked_text:
+        return None
+
+    if _word_or_phrase_matches("тряпка", checked_text):
+        if _is_personal_context(checked_text) or _is_isolated_word(checked_text, "тряпка"):
+            return "тряпка"
+
+    match = PERSONAL_INSULT_RE.search(checked_text)
+    if match:
+        return _find_insult(match.group(0)) or match.group(0)
+
+    match = REVERSE_PERSONAL_INSULT_RE.search(checked_text)
+    if match:
+        return _find_insult(match.group(0)) or match.group(0)
+
+    match = RUDE_COMMAND_RE.search(checked_text)
+    if match:
+        return match.group(0)
+
+    for pattern, regex in EXTRA_INSULT_RAW_RES:
+        if regex.search(checked_text):
+            return pattern
+
+    words = re.findall(r"[а-яa-z0-9_]+", checked_text)
+    if len(words) == 1:
+        return _find_insult(checked_text)
+
+    return None
+
+
+def check_insulting_language(normalized: str) -> str | None:
+    checked_text = _clean_insult_text(normalized)
+    if not checked_text:
+        return None
+
+    return _find_insult(checked_text)
+
+
 def check_message(
     text: str | None,
     user_id: int,
@@ -557,7 +619,8 @@ def check_message(
         return finish(result, str(specific_result["word"]))
 
     # 2) Личные оскорбления отдельно.
-    if _has_personal_insult(normalized):
+    personal_insult = check_personal_insult(normalized)
+    if personal_insult:
         return finish(
             _violation(
                 "personal_insult",
@@ -565,10 +628,23 @@ def check_message(
                 user_id,
                 chat_id,
             ),
-            None,
+            personal_insult,
         )
 
-    # 3) Неприличные/грязные слова, но не мат.
+    # 3) Оскорбительное слово без прямого обращения к участнику чата.
+    insulting_pattern = check_insulting_language(normalized)
+    if insulting_pattern:
+        return finish(
+            _violation(
+                "insulting_language",
+                "найдено унизительное слово без прямого личного обращения",
+                user_id,
+                chat_id,
+            ),
+            insulting_pattern,
+        )
+
+    # 4) Неприличные/грязные слова, но не мат.
     # Должно идти ДО profanity, чтобы бот не писал "без мата" на vulgar_language.
     vulgar_pattern = check_vulgar_language(normalized)
     if vulgar_pattern:
@@ -583,7 +659,7 @@ def check_message(
             vulgar_pattern,
         )
 
-    # 4) Настоящий мат.
+    # 5) Настоящий мат.
     profanity_pattern = check_profanity(normalized)
     if profanity_pattern:
         logger.debug("Moderation profanity pattern: %s", profanity_pattern)
@@ -624,31 +700,33 @@ def check_message(
 
 
 def _has_personal_insult(normalized: str) -> bool:
-    checked_text = NEGATED_INSULT_RE.sub(" ", normalized)
-    if _word_or_phrase_matches("тряпка", checked_text):
-        return _is_personal_context(checked_text)
-    if PERSONAL_INSULT_RE.search(checked_text) or RUDE_COMMAND_RE.search(checked_text):
-        return True
-    if EXTRA_INSULT_RE is not None:
-        words = re.findall(r"[а-яa-z0-9_]+", checked_text)
-        if len(words) <= 4 and EXTRA_INSULT_RE.search(checked_text):
-            return True
-        if re.search(rf"{WORD_LEFT}(?:ты|вы|он|она|они|этот|эта|эти){WORD_RIGHT}", checked_text):
-            if EXTRA_INSULT_RE.search(checked_text):
-                return True
-    if any(regex.search(checked_text) for _, regex in EXTRA_INSULT_RAW_RES):
-        return True
+    return check_personal_insult(normalized) is not None
 
-    # Одно короткое сообщение вроде "Идиот!" обычно является прямым обращением.
-    words = re.findall(r"[а-яa-z0-9_]+", checked_text)
-    return len(words) <= 4 and EXTRA_INSULT_RE is not None and EXTRA_INSULT_RE.search(checked_text) is not None
+
+def _clean_insult_text(normalized: str) -> str:
+    checked_text = normalized
+    for regex in SAFE_INSULT_REFERENCE_RES:
+        checked_text = regex.sub(" ", checked_text)
+    checked_text = NEGATED_INSULT_RE.sub(" ", checked_text)
+    return re.sub(r"\s+", " ", checked_text).strip()
+
+
+def _find_insult(normalized: str) -> str | None:
+    if EXTRA_INSULT_RE is None:
+        return None
+    match = EXTRA_INSULT_RE.search(normalized)
+    return match.group(0) if match else None
 
 
 def _is_personal_context(normalized: str) -> bool:
     return re.search(
-        rf"{WORD_LEFT}(?:ты|вы|он|она|они|этот|эта|эти|твой|твоя|твои){WORD_RIGHT}",
+        rf"{WORD_LEFT}(?:ты|вы|тебя|тебе|тобой|вас|вам|вами|твой|твоя|твои|ваш|ваша|ваши){WORD_RIGHT}",
         normalized,
     ) is not None
+
+
+def _is_isolated_word(normalized: str, word: str) -> bool:
+    return re.findall(r"[а-яa-z0-9_]+", normalized) == [normalize_text(word)]
 
 
 def _word_or_phrase_matches(word: str, normalized: str) -> bool:
@@ -809,25 +887,61 @@ def _debug_result(
 
 def _run_manual_check() -> None:
     samples = [
-        "Писька",
-        "Дрочил",
-        "Половой орган",
-        "Моча",
-        "Говно",
-        "Калл",
-        "Тупой",
-        "Идиот",
+        ("Писька", "vulgar_language"),
+        ("Дрочил", "vulgar_language"),
+        ("Говно", "vulgar_language"),
+        ("Моча", "vulgar_language"),
+        ("Кал", "vulgar_language"),
+        ("Калл", "vulgar_language"),
+        ("Половой орган", "vulgar_language"),
+        ("Нахрен", "profanity"),
+        ("Тупой", "personal_insult"),
+        ("Идиот", "personal_insult"),
+        ("Ты тряпка", "personal_insult"),
+        ("тряпка", "personal_insult"),
+        ("тряпка лежит на полу", "none"),
+        ("тряпка для уборки", "none"),
+        ("кяфир", "none"),
+        ("муртад", "none"),
+        ("заблудший", "none"),
+        ("ашарит", "none"),
+        ("саляфит", "none"),
+        ("хариджит", "none"),
+        ("Этот ученый ошибся", "none"),
+        ("Слово кяфир означает...", "none"),
+        ("кяфир идиот", "insulting_language"),
+        ("заблудший тупой", "insulting_language"),
+        ("этот человек идиот", "insulting_language"),
+        ("он тупой", "insulting_language"),
+        ("какой же он дурак", "insulting_language"),
+        ("ты кяфир идиот", "personal_insult"),
+        ("ты заблудший мразь", "personal_insult"),
+        ("слово идиот нельзя говорить", "none"),
+        ("он сказал слово идиот", "none"),
+        ("не говори идиот", "none"),
     ]
-    for index, sample in enumerate(samples, start=1):
+    failures: list[str] = []
+    for index, (sample, expected_category) in enumerate(samples, start=1):
         result = check_message(sample, user_id=1, chat_id=10_000 + index)
+        actual_category = str(result["category"])
+        ok = actual_category == expected_category
+        if expected_category == "vulgar_language" and "мат" in str(result["reply"]).lower():
+            ok = False
+            failures.append(f"{sample!r}: vulgar_language reply mentions мат")
+        if not ok:
+            failures.append(f"{sample!r}: expected {expected_category}, got {actual_category}")
         print(
             {
                 "text": sample,
-                "category": result["category"],
+                "expected": expected_category,
+                "category": actual_category,
                 "violation": result["violation"],
+                "ok": ok,
                 "reply": result["reply"],
             }
         )
+    if failures:
+        raise AssertionError("Manual moderation checks failed:\n" + "\n".join(failures))
 
 
 if __name__ == "__main__":
