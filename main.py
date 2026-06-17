@@ -107,14 +107,14 @@ def register_handlers(
             f"Бот активен. Всего мягких предупреждений в этом чате: {total_warnings}.",
         )
 
-    @dp.message(F.text)
+    @dp.message(F.text | F.caption)
     async def moderate_text(message: Message) -> None:
         if _from_bot(message) or message.from_user is None:
             return
         if message.chat.type not in GROUP_TYPES:
             return
 
-        text = message.text or ""
+        text = message.text or message.caption or ""
         if not text or text.startswith("/"):
             return
 

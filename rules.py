@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -130,7 +131,7 @@ VULGAR_PATTERNS = [
     r"испражнен[а-я]*",
     r"испражнят[а-я]*",
     r"какаш[а-я]*",
-    r"кал[а-я]*",
+    r"калл?",
     r"моч[а-я]*",
     r"пенис[а-я]*",
     r"пис[ь]?к[а-я]*",
@@ -139,7 +140,7 @@ VULGAR_PATTERNS = [
     r"минет[а-я]*",
     r"отсос[а-я]*",
     r"сосать",
-    r"сос[ие][а-я]*",
+    r"соси",
     r"секс[а-я]*",
     r"трах[а-я]*",
     r"фекал[а-я]*",
@@ -177,7 +178,10 @@ THREAT_PATTERNS = [
     r"(?:я\s+)?(?:тебя|вас|его|ее|их)\s+(?:убью|побью|изобью|зарежу|порежу|сломаю)",
     r"(?:убью|побью|изобью|зарежу|порежу|сломаю)\s+(?:тебя|вас|его|ее|их)",
     r"найду\s+(?:тебя|вас)?\s*и\s+(?:убью|побью|изобью|зарежу|порежу|сломаю)",
+    r"найду\s+и\s+разберусь",
     r"разберусь\s+с\s+(?:тобой|вами|ним|ней)",
+    r"побью",
+    r"сломаю\s+(?:тебе|вам|ему|ей|им)",
 ]
 
 MOCKERY_PATTERNS = [
@@ -187,9 +191,76 @@ MOCKERY_PATTERNS = [
 
 PROVOCATION_PATTERNS = [
     r"слабо\s+(?:сказать|повторить)\s+(?:в\s+лицо|при\s+встрече)",
+    r"скажи\s+(?:это\s+)?в\s+лицо",
     r"выйди\s+(?:поговорим|разберемся)",
     r"давай\s+встретимся\s+и\s+разберемся",
 ]
+
+RELIGIOUS_TERMS = (
+    "кяфир",
+    "муртад",
+    "заблудший",
+    "такфир",
+    "ширк",
+    "куфр",
+    "ахлю сунна",
+    "саляфит",
+    "ашарит",
+    "хариджит",
+    "рафидит",
+    "джахмит",
+)
+
+MEDICAL_OR_EDUCATIONAL_WORDS = (
+    "анализ",
+    "медицин",
+    "медицинский",
+    "медицина",
+    "врач",
+    "учебник",
+    "анатомия",
+    "строение",
+    "термин",
+    "биология",
+    "лаборатория",
+    "сдача анализа",
+    "сдача",
+)
+
+EXPLICIT_CHLEN_CONTEXTS = (
+    "сосать член",
+    "соси член",
+    "покажи член",
+    "мой член",
+    "твой член",
+    "его член",
+    "ее член",
+)
+
+SAFE_SOSAT_CONTEXTS = (
+    "сосет палец",
+    "сосет воздух",
+    "сосать палец",
+    "сосать леденец",
+    "сосать конфету",
+    "насос сосет",
+)
+
+SAFE_TRYAPKA_PATTERNS = (
+    r"тряпк[а-я]*\s+(?:лежит|для|мокр[а-я]*|сух[а-я]*)",
+    r"(?:мокр[а-я]*|сух[а-я]*|грязн[а-я]*|чист[а-я]*)\s+тряпк[а-я]*",
+    r"(?:возьми|протри|убери|намочи|выжми)\s+тряпк[а-я]*",
+    r"протри\s+тряпк[а-я]*",
+)
+
+SAFE_TUPOY_PATTERNS = (
+    r"туп(?:ой|ая|ое|ые|ого|ую|ым|ыми|ых)?\s+угол",
+    r"туп(?:ой|ая|ое|ые|ого|ую|ым|ыми|ых)?\s+нож",
+    r"туп(?:ой|ая|ое|ые|ого|ую|ым|ыми|ых)?\s+боль",
+    r"туп(?:ой|ая|ое|ые|ого|ую|ым|ыми|ых)?\s+звук",
+    r"туп(?:ой|ая|ое|ые|ого|ую|ым|ыми|ых)?\s+предмет",
+    r"туп(?:ой|ая|ое|ые|ого|ую|ым|ыми|ых)?\s+сторон[а-я]*(?:\s+ножа)?",
+)
 
 
 def _compile_word_patterns(patterns: list[str]) -> list[tuple[str, re.Pattern[str]]]:
@@ -412,6 +483,7 @@ EXTRA_PROFANITY_WORDS = _load_extra_profanity_words()
 ADAB_INSULT_PATTERNS = [_word_or_phrase_pattern(word) for word in ADAB_BAD_WORDS["insult_words"]]
 ALL_INSULT_PATTERNS = [pattern for pattern in INSULT_PATTERNS + ADAB_INSULT_PATTERNS if pattern]
 INSULT_PATTERN_GROUP = "|".join(f"(?:{pattern})" for pattern in ALL_INSULT_PATTERNS)
+QUOTE_CHARS = "\"'«»“”„"
 EXTRA_PROFANITY_RES = _compile_extra_words(
     {
         word
@@ -454,32 +526,36 @@ THREAT_RE = _compile_word_pattern(
 MOCKERY_RE = _compile_word_pattern(MOCKERY_PATTERNS)
 PROVOCATION_RE = _compile_word_pattern(PROVOCATION_PATTERNS)
 NEGATED_INSULT_RE = re.compile(
-    rf"{WORD_LEFT}не\s+(?:{INSULT_PATTERN_GROUP}){WORD_RIGHT}",
+    rf"{WORD_LEFT}не\s+[{QUOTE_CHARS}]*(?:{INSULT_PATTERN_GROUP})[{QUOTE_CHARS}]*{WORD_RIGHT}",
     re.IGNORECASE,
 )
 PERSONAL_INSULT_RE = re.compile(
     rf"{WORD_LEFT}(?:ты|вы|тебя|тебе|тобой|вас|вам|вами|твой|твоя|твои|ваш|ваша|ваши)"
-    rf"(?:\s+[а-яa-z0-9_]+){{0,4}}\s+"
-    rf"(?:{INSULT_PATTERN_GROUP}){WORD_RIGHT}",
+    rf"(?:\s+[а-яa-z0-9_]+){{0,4}}\s+[{QUOTE_CHARS}]*"
+    rf"(?:{INSULT_PATTERN_GROUP})[{QUOTE_CHARS}]*{WORD_RIGHT}",
     re.IGNORECASE,
 )
 REVERSE_PERSONAL_INSULT_RE = re.compile(
-    rf"{WORD_LEFT}(?:{INSULT_PATTERN_GROUP})"
+    rf"{WORD_LEFT}[{QUOTE_CHARS}]*(?:{INSULT_PATTERN_GROUP})[{QUOTE_CHARS}]*"
     rf"(?:\s+[а-яa-z0-9_]+){{0,2}}\s+"
     rf"(?:ты|вы|тебя|вас){WORD_RIGHT}",
     re.IGNORECASE,
 )
+SELF_PERSONAL_INSULT_RE = re.compile(
+    rf"{WORD_LEFT}сам(?:а|и)?\s+[{QUOTE_CHARS}]*(?:{INSULT_PATTERN_GROUP})[{QUOTE_CHARS}]*{WORD_RIGHT}",
+    re.IGNORECASE,
+)
 SAFE_INSULT_REFERENCE_RES = [
     re.compile(
-        rf"{WORD_LEFT}(?:слово|термин|выражение)\s+(?:{INSULT_PATTERN_GROUP}){WORD_RIGHT}",
+        rf"{WORD_LEFT}(?:слово|термин|выражение)\s+[{QUOTE_CHARS}]*(?:{INSULT_PATTERN_GROUP})[{QUOTE_CHARS}]*{WORD_RIGHT}",
         re.IGNORECASE,
     ),
     re.compile(
-        rf"{WORD_LEFT}(?:не\s+говори|не\s+пиши)\s+(?:{INSULT_PATTERN_GROUP}){WORD_RIGHT}",
+        rf"{WORD_LEFT}(?:не\s+говори|не\s+пиши|не\s+используй)\s+(?:слово\s+)?[{QUOTE_CHARS}]*(?:{INSULT_PATTERN_GROUP})[{QUOTE_CHARS}]*{WORD_RIGHT}",
         re.IGNORECASE,
     ),
     re.compile(
-        rf"{WORD_LEFT}нельзя\s+(?:говорить|писать|употреблять)\s+(?:{INSULT_PATTERN_GROUP}){WORD_RIGHT}",
+        rf"{WORD_LEFT}нельзя\s+(?:говорить|писать|употреблять)\s+(?:слово\s+)?[{QUOTE_CHARS}]*(?:{INSULT_PATTERN_GROUP})[{QUOTE_CHARS}]*{WORD_RIGHT}",
         re.IGNORECASE,
     ),
 ]
@@ -489,6 +565,8 @@ def check_word_specific(normalized: str) -> dict[str, Any] | None:
     for word, data in WORD_SPECIFIC_REPLIES.items():
         pattern = _word_or_phrase_pattern(word, suffix=False)
         if pattern and re.search(f"{WORD_LEFT}(?:{pattern}){WORD_RIGHT}", normalized, re.IGNORECASE):
+            if data["category"] == "vulgar_language" and _is_safe_vulgar_context(word, normalized):
+                continue
             if word == "тряпка" and not (
                 _is_personal_context(normalized) or _is_isolated_word(normalized, word)
             ):
@@ -508,15 +586,18 @@ def check_profanity(normalized: str) -> str | None:
     if specific is not None and specific.get("category") == "vulgar_language":
         return None
 
-    # Если vulgar-паттерн уже нашёл слово, это не мат, а category="vulgar_language".
+    # Если vulgar-паттерн уже нашёл не безопасное слово, это не мат, а category="vulgar_language".
     for pattern, regex in VULGAR_RES:
-        if regex.search(normalized):
+        match = regex.search(normalized)
+        if match and not _is_safe_vulgar_context(match.group(0), normalized):
             return None
     for pattern, regex in EXTRA_VULGAR_RES:
-        if regex.search(normalized):
+        match = regex.search(normalized)
+        if match and not _is_safe_vulgar_context(match.group(0), normalized):
             return None
     for pattern, regex in EXTRA_VULGAR_RAW_RES:
-        if regex.search(normalized):
+        match = regex.search(normalized)
+        if match and not _is_safe_vulgar_context(match.group(0), normalized):
             return None
 
     for pattern, regex in PROFANITY_RES:
@@ -538,17 +619,24 @@ def check_profanity(normalized: str) -> str | None:
 
 def check_vulgar_language(normalized: str) -> str | None:
     for pattern, regex in VULGAR_RES:
-        if regex.search(normalized):
+        match = regex.search(normalized)
+        if match and not _is_safe_vulgar_context(match.group(0), normalized):
             return pattern
     for pattern, regex in EXTRA_VULGAR_RES:
-        if regex.search(normalized):
+        match = regex.search(normalized)
+        if match and not _is_safe_vulgar_context(match.group(0), normalized):
             return f"{ADAB_BAD_WORDS_FILE.name}:{pattern}"
     for pattern, regex in EXTRA_VULGAR_RAW_RES:
-        if regex.search(normalized):
+        match = regex.search(normalized)
+        if match and not _is_safe_vulgar_context(match.group(0), normalized):
             return f"{ADAB_BAD_WORDS_FILE.name}:{pattern}"
 
     for word in re.findall(r"[а-яa-z]+", normalized):
-        if word in EXTRA_PROFANITY_WORDS and _is_vulgar_word(word):
+        if (
+            word in EXTRA_PROFANITY_WORDS
+            and _is_vulgar_word(word)
+            and not _is_safe_vulgar_context(word, normalized)
+        ):
             return f"words.txt:{word}"
 
     return None
@@ -562,6 +650,10 @@ def check_personal_insult(normalized: str) -> str | None:
     if _word_or_phrase_matches("тряпка", checked_text):
         if _is_personal_context(checked_text) or _is_isolated_word(checked_text, "тряпка"):
             return "тряпка"
+
+    match = SELF_PERSONAL_INSULT_RE.search(checked_text)
+    if match:
+        return _find_insult(match.group(0)) or match.group(0)
 
     match = PERSONAL_INSULT_RE.search(checked_text)
     if match:
@@ -591,6 +683,9 @@ def check_insulting_language(normalized: str) -> str | None:
     if not checked_text:
         return None
 
+    if _word_or_phrase_matches("тряпка", checked_text) and not _is_safe_tryapka_context(checked_text):
+        return "тряпка"
+
     return _find_insult(checked_text)
 
 
@@ -607,18 +702,23 @@ def check_message(
     def finish(result: dict[str, Any], matched: str | None) -> dict[str, Any]:
         return _debug_result(result, matched, original_text, normalized)
 
-    logger.debug("Moderation input: original=%r normalized=%r", original_text, normalized)
+    logger.debug("Moderation input: has_text=%s length=%s", bool(original_text), len(original_text))
     if not normalized:
         return finish(_no_violation(), None)
 
-    # 1) Точечные слова/фразы проверяем первыми.
-    # Это нужно, чтобы "писька", "дрочил", "говно", "моча", "кал" не уходили в profanity.
-    specific_result = check_word_specific(normalized)
-    if specific_result is not None:
-        result = _specific_violation(specific_result, user_id, chat_id)
-        return finish(result, str(specific_result["word"]))
+    if THREAT_RE.search(normalized):
+        return finish(_violation("threat", "найдена прямая угроза", user_id, chat_id), None)
 
-    # 2) Личные оскорбления отдельно.
+    if PROVOCATION_RE.search(normalized):
+        return finish(
+            _violation("provocation", "найдена агрессивная провокация", user_id, chat_id),
+            None,
+        )
+
+    if is_meta_discussion(normalized):
+        return finish(_no_violation(), None)
+
+    # Личные оскорбления идут выше общих унизительных слов.
     personal_insult = check_personal_insult(normalized)
     if personal_insult:
         return finish(
@@ -631,7 +731,7 @@ def check_message(
             personal_insult,
         )
 
-    # 3) Оскорбительное слово без прямого обращения к участнику чата.
+    # Оскорбительное слово без прямого обращения к участнику чата.
     insulting_pattern = check_insulting_language(normalized)
     if insulting_pattern:
         return finish(
@@ -644,7 +744,20 @@ def check_message(
             insulting_pattern,
         )
 
-    # 4) Неприличные/грязные слова, но не мат.
+    if MOCKERY_RE.search(normalized):
+        return finish(
+            _violation("mockery", "найдена грубая насмешка", user_id, chat_id),
+            None,
+        )
+
+    # Точечные слова/фразы проверяем перед общими vulgar/profanity.
+    # Это нужно, чтобы "писька", "дрочил", "говно", "моча", "кал" не уходили в profanity.
+    specific_result = check_word_specific(normalized)
+    if specific_result is not None:
+        result = _specific_violation(specific_result, user_id, chat_id)
+        return finish(result, str(specific_result["word"]))
+
+    # Неприличные/грязные слова, но не мат.
     # Должно идти ДО profanity, чтобы бот не писал "без мата" на vulgar_language.
     vulgar_pattern = check_vulgar_language(normalized)
     if vulgar_pattern:
@@ -659,14 +772,11 @@ def check_message(
             vulgar_pattern,
         )
 
-    # 5) Настоящий мат.
+    # Настоящий мат.
     profanity_pattern = check_profanity(normalized)
     if profanity_pattern:
         logger.debug("Moderation profanity pattern: %s", profanity_pattern)
         return finish(_profanity_violation(user_id, chat_id), profanity_pattern)
-
-    if THREAT_RE.search(normalized):
-        return finish(_violation("threat", "найдена прямая угроза", user_id, chat_id), None)
 
     rule_settings = _settings_from_config(settings)
     if _is_caps_aggression(original_text, rule_settings):
@@ -684,18 +794,6 @@ def check_message(
     if history_result:
         return finish(history_result, None)
 
-    if MOCKERY_RE.search(normalized):
-        return finish(
-            _violation("mockery", "найдена грубая насмешка", user_id, chat_id),
-            None,
-        )
-
-    if PROVOCATION_RE.search(normalized):
-        return finish(
-            _violation("provocation", "найдена агрессивная провокация", user_id, chat_id),
-            None,
-        )
-
     return finish(_no_violation(), None)
 
 
@@ -704,6 +802,9 @@ def _has_personal_insult(normalized: str) -> bool:
 
 
 def _clean_insult_text(normalized: str) -> str:
+    if is_meta_discussion(normalized):
+        return ""
+
     checked_text = normalized
     for regex in SAFE_INSULT_REFERENCE_RES:
         checked_text = regex.sub(" ", checked_text)
@@ -714,8 +815,71 @@ def _clean_insult_text(normalized: str) -> str:
 def _find_insult(normalized: str) -> str | None:
     if EXTRA_INSULT_RE is None:
         return None
-    match = EXTRA_INSULT_RE.search(normalized)
-    return match.group(0) if match else None
+    for match in EXTRA_INSULT_RE.finditer(normalized):
+        insult = match.group(0).strip(QUOTE_CHARS)
+        if _is_safe_insult_context(insult, normalized):
+            continue
+        return insult
+    return None
+
+
+def is_meta_discussion(normalized: str) -> bool:
+    if not _contains_discussed_term(normalized):
+        return False
+
+    meta_patterns = (
+        r"(?:слово|термин|выражение)",
+        r"(?:сказал|сказала|сказали|написал|написала|написали|говорил|говорила|говорили|пишет|говорит)\s+(?:слово\s+)?",
+        r"(?:что\s+значит|что\s+означает|почему\s+слово|можно\s+ли\s+говорить|можно\s+ли\s+писать)",
+        r"(?:означает|переводится)",
+        r"(?:нельзя\s+говорить|нельзя\s+писать|не\s+используй|не\s+говори|не\s+пиши)",
+        r"(?:назвал\s+меня|меня\s+назвали|я\s+не\s+называл|я\s+не\s+говорил|не\s+надо\s+называть)",
+        r"есть\s+выражение",
+    )
+    return any(re.search(pattern, normalized, re.IGNORECASE) for pattern in meta_patterns)
+
+
+def _contains_discussed_term(normalized: str) -> bool:
+    if EXTRA_INSULT_RE is not None and EXTRA_INSULT_RE.search(normalized):
+        return True
+    if any(_word_or_phrase_matches(term, normalized) for term in RELIGIOUS_TERMS):
+        return True
+    return any(regex.search(normalized) for _, regex in VULGAR_RES)
+
+
+def _is_safe_insult_context(insult: str, normalized: str) -> bool:
+    if insult.startswith("туп"):
+        return any(re.search(pattern, normalized, re.IGNORECASE) for pattern in SAFE_TUPOY_PATTERNS)
+    if insult.startswith("тряпк"):
+        return _is_safe_tryapka_context(normalized)
+    return False
+
+
+def _is_safe_tryapka_context(normalized: str) -> bool:
+    return any(re.search(pattern, normalized, re.IGNORECASE) for pattern in SAFE_TRYAPKA_PATTERNS)
+
+
+def _is_safe_vulgar_context(word: str, normalized: str) -> bool:
+    checked_word = normalize_text(word).strip(QUOTE_CHARS)
+
+    if checked_word.startswith("член"):
+        if any(context in normalized for context in EXPLICIT_CHLEN_CONTEXTS):
+            return False
+        return True
+
+    if checked_word.startswith("сос"):
+        if any(context in normalized for context in SAFE_SOSAT_CONTEXTS):
+            return True
+        return False
+
+    if checked_word.startswith(("моч", "кал", "калл", "пенис", "полов")):
+        return _is_medical_or_educational_context(normalized)
+
+    return False
+
+
+def _is_medical_or_educational_context(normalized: str) -> bool:
+    return any(marker in normalized for marker in MEDICAL_OR_EDUCATIONAL_WORDS)
 
 
 def _is_personal_context(normalized: str) -> bool:
@@ -871,22 +1035,121 @@ def _debug_result(
         matched,
         result["reply"],
     )
-    print(
-        "[MODERATION]",
-        {
-            "original": original_text,
-            "normalized": normalized,
+    if _env_flag("DEBUG_MODERATION"):
+        payload = {
+            "category": result["category"],
             "matched_word": matched if matched and not any(char in matched for char in r"\[]()*+?") else None,
             "matched_pattern": matched if matched and any(char in matched for char in r"\[]()*+?") else None,
-            "category": result["category"],
-            "reply": result["reply"],
-        },
-    )
+            "reason": result["reason"],
+        }
+        if _env_flag("DEBUG_MODERATION_FULL"):
+            payload["original"] = original_text
+            payload["normalized"] = normalized
+        print("[MODERATION]", payload)
     return result
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _run_manual_check() -> None:
     samples = [
+        ("Слово идиот нельзя говорить", "none"),
+        ("Он сказал слово идиот", "none"),
+        ("Она написала слово тупой", "none"),
+        ("Не используй слово идиот", "none"),
+        ("Что значит идиот?", "none"),
+        ("Почему слово идиот оскорбление?", "none"),
+        ("Он назвал меня идиотом", "none"),
+        ("Меня назвали идиотом", "none"),
+        ("Я не называл тебя идиотом", "none"),
+        ("Не надо называть людей идиотами", "none"),
+        ("Что означает слово кяфир?", "none"),
+        ("Слово кяфир означает...", "none"),
+        ("Можно ли говорить слово заблудший?", "none"),
+        ('Слово "идиот" нельзя писать', "none"),
+        ('Он написал "тупой"', "none"),
+        ('Что означает "кяфир"?', "none"),
+        ('Можно ли говорить "заблудший"?', "none"),
+        ('Есть выражение "сам дурак"', "none"),
+        ('ты "идиот"', "personal_insult"),
+        ('вы "тупые"', "personal_insult"),
+        ("Ты не идиот", "none"),
+        ("Он не тупой", "none"),
+        ("Я не говорил, что ты тупой", "none"),
+        ("Не будь идиотом", "insulting_language"),
+        ("член команды", "none"),
+        ("член семьи", "none"),
+        ("член предложения", "none"),
+        ("член комиссии", "none"),
+        ("член организации", "none"),
+        ("член жюри", "none"),
+        ("он член нашей группы", "none"),
+        ("сосать член", "vulgar_language"),
+        ("покажи член", "vulgar_language"),
+        ("мой член", "vulgar_language"),
+        ("тупой угол", "none"),
+        ("тупой нож", "none"),
+        ("тупая боль", "none"),
+        ("тупой звук", "none"),
+        ("тупой предмет", "none"),
+        ("тупая сторона ножа", "none"),
+        ("тупой", "personal_insult"),
+        ("ты тупой", "personal_insult"),
+        ("вы тупые", "personal_insult"),
+        ("он тупой", "insulting_language"),
+        ("этот человек тупой", "insulting_language"),
+        ("тряпка лежит на полу", "none"),
+        ("тряпка для уборки", "none"),
+        ("возьми тряпку", "none"),
+        ("протри тряпкой", "none"),
+        ("мокрая тряпка", "none"),
+        ("тряпка", "personal_insult"),
+        ("ты тряпка", "personal_insult"),
+        ("он тряпка", "insulting_language"),
+        ("анализ мочи", "none"),
+        ("моча нужна для анализа", "none"),
+        ("кал на анализ", "none"),
+        ("сдача кала", "none"),
+        ("половой орган в учебнике", "none"),
+        ("строение полового органа", "none"),
+        ("пенис медицинский термин", "none"),
+        ("анатомия полового органа", "none"),
+        ("моча", "vulgar_language"),
+        ("кал", "vulgar_language"),
+        ("половой орган", "vulgar_language"),
+        ("пенис", "vulgar_language"),
+        ("ребенок сосет палец", "none"),
+        ("сосать леденец", "none"),
+        ("сосать конфету", "none"),
+        ("насос сосет воздух", "none"),
+        ("соси", "vulgar_language"),
+        ("отсос", "vulgar_language"),
+        ("иди соси", "vulgar_language"),
+        ("кяфир", "none"),
+        ("муртад", "none"),
+        ("заблудший", "none"),
+        ("такфир", "none"),
+        ("ширк", "none"),
+        ("куфр", "none"),
+        ("ахлю сунна", "none"),
+        ("саляфит", "none"),
+        ("ашарит", "none"),
+        ("хариджит", "none"),
+        ("рафидит", "none"),
+        ("джахмит", "none"),
+        ("ты кяфир", "none"),
+        ("ты муртад", "none"),
+        ("ты заблудший", "none"),
+        ("кяфир идиот", "insulting_language"),
+        ("заблудший тупой", "insulting_language"),
+        ("ты кяфир идиот", "personal_insult"),
+        ("ты заблудший мразь", "personal_insult"),
+        ("ты идиот", "personal_insult"),
+        ("он идиот", "insulting_language"),
+        ("идиот", "personal_insult"),
+        ("сам дурак", "personal_insult"),
         ("Писька", "vulgar_language"),
         ("Дрочил", "vulgar_language"),
         ("Говно", "vulgar_language"),
@@ -895,30 +1158,15 @@ def _run_manual_check() -> None:
         ("Калл", "vulgar_language"),
         ("Половой орган", "vulgar_language"),
         ("Нахрен", "profanity"),
-        ("Тупой", "personal_insult"),
-        ("Идиот", "personal_insult"),
-        ("Ты тряпка", "personal_insult"),
-        ("тряпка", "personal_insult"),
-        ("тряпка лежит на полу", "none"),
-        ("тряпка для уборки", "none"),
-        ("кяфир", "none"),
-        ("муртад", "none"),
-        ("заблудший", "none"),
-        ("ашарит", "none"),
-        ("саляфит", "none"),
-        ("хариджит", "none"),
-        ("Этот ученый ошибся", "none"),
-        ("Слово кяфир означает...", "none"),
-        ("кяфир идиот", "insulting_language"),
-        ("заблудший тупой", "insulting_language"),
-        ("этот человек идиот", "insulting_language"),
-        ("он тупой", "insulting_language"),
-        ("какой же он дурак", "insulting_language"),
-        ("ты кяфир идиот", "personal_insult"),
-        ("ты заблудший мразь", "personal_insult"),
-        ("слово идиот нельзя говорить", "none"),
-        ("он сказал слово идиот", "none"),
-        ("не говори идиот", "none"),
+        ("я тебя убью идиот", "threat"),
+        ("выйди поговорим", "provocation"),
+        ("выйди поговорим, идиот", "provocation"),
+        ("календарь", "none"),
+        ("калькулятор", "none"),
+        ("калий", "none"),
+        ("каллиграфия", "none"),
+        ("локализация", "none"),
+        ("накал", "none"),
     ]
     failures: list[str] = []
     for index, (sample, expected_category) in enumerate(samples, start=1):
