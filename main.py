@@ -2,23 +2,48 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from time import time
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
-from aiogram.types import BotCommand, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    BotCommand,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    LabeledPrice,
+    Message,
+    PreCheckoutQuery,
+    ReplyKeyboardMarkup,
+)
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 try:
     from .config import Config, load_config
-    from .keyboards import start_keyboard
+    from .keyboards import (
+        BUG_BUTTON_TEXT,
+        HELP_BUTTON_TEXT,
+        SUPPORT_AMOUNTS,
+        SUPPORT_BUTTON_TEXT,
+        private_menu_keyboard,
+        start_keyboard,
+        support_amounts_keyboard,
+    )
     from .rules import check_message, normalize_text
     from .storage import AdabStorage
 except ImportError:
     from config import Config, load_config
-    from keyboards import start_keyboard
+    from keyboards import (
+        BUG_BUTTON_TEXT,
+        HELP_BUTTON_TEXT,
+        SUPPORT_AMOUNTS,
+        SUPPORT_BUTTON_TEXT,
+        private_menu_keyboard,
+        start_keyboard,
+        support_amounts_keyboard,
+    )
     from rules import check_message, normalize_text
     from storage import AdabStorage
 
@@ -63,7 +88,35 @@ HELP_TEXT = f"""{TASLIM_TEXT}
 
 Я только мягко напоминаю участникам сохранять уважительный тон.
 
-Если нашли баг или хотите предложить улучшение - напишите: @AbuSidq"""
+Поддержать проект:
+нажмите кнопку «⭐ Поддержать проект» снизу.
+
+Сообщить о баге:
+@AbuSidq"""
+
+SUPPORT_TEXT = f"""{TASLIM_TEXT}
+
+Вы можете поддержать развитие бота через Telegram Stars.
+
+Поддержка помогает развивать проект, исправлять ошибки и улучшать напоминания об адабе.
+
+Выберите сумму:"""
+
+BUG_REPORT_TEXT = f"""{TASLIM_TEXT}
+
+Если вы нашли баг, заметили ложное срабатывание или хотите предложить улучшение — напишите:
+
+@AbuSidq
+
+Желательно указать:
+• что написал пользователь;
+• как ответил бот;
+• почему, по вашему мнению, это ошибка."""
+
+SUPPORT_THANKS_TEXT = """جزاك الله خيرا
+
+Спасибо за поддержку проекта!
+Пусть Аллах воздаст вам благом."""
 
 
 def register_handlers(
@@ -82,13 +135,53 @@ def register_handlers(
             START_TEXT,
             reply_markup=start_keyboard(bot_info.username or ""),
         )
+        await _safe_answer(
+            message,
+            "Выберите действие:",
+            reply_markup=private_menu_keyboard(),
+        )
 
     @dp.message(Command("help"))
     @dp.message(Command("adab_help"))
     async def adab_help(message: Message) -> None:
         if _from_bot(message):
             return
-        await _safe_reply(message, HELP_TEXT)
+        await _safe_reply(
+            message,
+            HELP_TEXT,
+            reply_markup=private_menu_keyboard() if message.chat.type == "private" else None,
+        )
+
+    @dp.message(Command("support"))
+    @dp.message(F.text == SUPPORT_BUTTON_TEXT)
+    async def support(message: Message) -> None:
+        if _from_bot(message):
+            return
+        if message.chat.type != "private":
+            await _safe_reply(message, "Поддержать проект можно в личном чате с ботом: /support")
+            return
+        await _send_support_options(message)
+
+    @dp.message(Command("bug"))
+    @dp.message(F.text == BUG_BUTTON_TEXT)
+    async def report_bug(message: Message) -> None:
+        if _from_bot(message):
+            return
+        await _safe_reply(
+            message,
+            BUG_REPORT_TEXT,
+            reply_markup=private_menu_keyboard() if message.chat.type == "private" else None,
+        )
+
+    @dp.message(F.text == HELP_BUTTON_TEXT)
+    async def help_button(message: Message) -> None:
+        if _from_bot(message):
+            return
+        await _safe_reply(
+            message,
+            HELP_TEXT,
+            reply_markup=private_menu_keyboard() if message.chat.type == "private" else None,
+        )
 
     @dp.message(Command("adab_status"))
     async def adab_status(message: Message, bot: Bot) -> None:
@@ -165,6 +258,70 @@ def register_handlers(
         if await _safe_reply(message, str(result["reply"])):
             await storage.mark_warning(message.chat.id, message.from_user.id)
 
+    @dp.callback_query(F.data.startswith("support_stars:"))
+    async def support_stars_callback(callback: CallbackQuery) -> None:
+        if callback.from_user.is_bot:
+            return
+
+        amount = _support_amount_from_callback(callback.data or "")
+        if amount is None:
+            await callback.answer("Неизвестная сумма.", show_alert=True)
+            return
+
+        message = callback.message
+        if not isinstance(message, Message):
+            await callback.answer("Не удалось открыть оплату.", show_alert=True)
+            return
+
+        payload = f"support_stars:{callback.from_user.id}:{amount}:{int(time())}"
+        await message.answer_invoice(
+            title="Поддержка Adab Protector",
+            description="Добровольная поддержка развития бота и улучшения напоминаний об адабе.",
+            payload=payload,
+            currency="XTR",
+            prices=[LabeledPrice(label="Поддержка проекта", amount=amount)],
+            provider_token="",
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False,
+            disable_notification=True,
+        )
+        await callback.answer()
+
+    @dp.pre_checkout_query()
+    async def pre_checkout(query: PreCheckoutQuery) -> None:
+        if query.invoice_payload.startswith("support_stars:"):
+            await query.answer(ok=True)
+            return
+        await query.answer(ok=False, error_message="Неизвестный платёж.")
+
+    @dp.message(F.successful_payment)
+    async def successful_payment(message: Message) -> None:
+        payment = message.successful_payment
+        if payment is None:
+            return
+
+        payload = payment.invoice_payload
+        if payment.currency == "XTR" and payload.startswith("support_stars:"):
+            await _safe_reply(message, SUPPORT_THANKS_TEXT)
+            if message.from_user is None:
+                return
+            try:
+                await storage.add_support_payment(
+                    user_id=message.from_user.id,
+                    username=message.from_user.username,
+                    full_name=message.from_user.full_name,
+                    amount=payment.total_amount,
+                    currency=payment.currency,
+                    payload=payload,
+                    telegram_payment_charge_id=payment.telegram_payment_charge_id,
+                    provider_payment_charge_id=payment.provider_payment_charge_id,
+                )
+            except Exception:
+                logger.exception("Failed to record support payment")
+
 
 async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
     try:
@@ -183,7 +340,7 @@ async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
 async def _safe_reply(
     message: Message,
     text: str,
-    reply_markup: InlineKeyboardMarkup | None = None,
+    reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
 ) -> bool:
     try:
         await message.reply(text, disable_notification=True, reply_markup=reply_markup)
@@ -191,6 +348,37 @@ async def _safe_reply(
     except TelegramAPIError:
         logger.exception("Failed to send Telegram reply")
         return False
+
+
+async def _safe_answer(
+    message: Message,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
+) -> bool:
+    try:
+        await message.answer(text, disable_notification=True, reply_markup=reply_markup)
+        return True
+    except TelegramAPIError:
+        logger.exception("Failed to send Telegram answer")
+        return False
+
+
+async def _send_support_options(message: Message) -> None:
+    await _safe_reply(message, SUPPORT_TEXT, reply_markup=support_amounts_keyboard())
+    await _safe_answer(message, "Выберите действие:", reply_markup=private_menu_keyboard())
+
+
+def _support_amount_from_callback(data: str) -> int | None:
+    prefix = "support_stars:"
+    if not data.startswith(prefix):
+        return None
+    try:
+        amount = int(data.removeprefix(prefix))
+    except ValueError:
+        return None
+    if amount not in SUPPORT_AMOUNTS:
+        return None
+    return amount
 
 
 def _from_bot(message: Message) -> bool:
@@ -204,6 +392,8 @@ async def _set_commands(bot: Bot) -> None:
                 BotCommand(command="start", description="Приветствие и добавление в группу"),
                 BotCommand(command="help", description="Как работает бот адаба"),
                 BotCommand(command="adab_help", description="Как работает бот адаба"),
+                BotCommand(command="support", description="Поддержать проект"),
+                BotCommand(command="bug", description="Сообщить о баге"),
                 BotCommand(command="adab_status", description="Статус и предупреждения"),
             ]
         )

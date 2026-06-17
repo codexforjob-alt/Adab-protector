@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -58,7 +59,82 @@ class AdabStorage:
 
             CREATE INDEX IF NOT EXISTS idx_history_chat_user_time
             ON message_history (chat_id, user_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS support_payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                full_name TEXT,
+                amount INTEGER,
+                currency TEXT,
+                payload TEXT,
+                telegram_payment_charge_id TEXT,
+                provider_payment_charge_id TEXT,
+                created_at TEXT
+            );
             """
+        )
+        await db.commit()
+
+    async def init_support_payments_table(self) -> None:
+        db = self._db()
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS support_payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                full_name TEXT,
+                amount INTEGER,
+                currency TEXT,
+                payload TEXT,
+                telegram_payment_charge_id TEXT,
+                provider_payment_charge_id TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        await db.commit()
+
+    async def add_support_payment(
+        self,
+        user_id: int,
+        username: str | None,
+        full_name: str | None,
+        amount: int,
+        currency: str,
+        payload: str,
+        telegram_payment_charge_id: str,
+        provider_payment_charge_id: str,
+        created_at: str | None = None,
+    ) -> None:
+        db = self._db()
+        await db.execute(
+            """
+            INSERT INTO support_payments (
+                user_id,
+                username,
+                full_name,
+                amount,
+                currency,
+                payload,
+                telegram_payment_charge_id,
+                provider_payment_charge_id,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                username,
+                full_name,
+                amount,
+                currency,
+                payload,
+                telegram_payment_charge_id,
+                provider_payment_charge_id,
+                created_at or datetime.now(timezone.utc).isoformat(),
+            ),
         )
         await db.commit()
 
