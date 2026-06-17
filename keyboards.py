@@ -24,7 +24,7 @@ def start_keyboard(bot_username: str) -> InlineKeyboardMarkup:
     )
 
 
-def private_menu_keyboard() -> ReplyKeyboardMarkup:
+def private_main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=SUPPORT_BUTTON_TEXT)],
@@ -34,9 +34,13 @@ def private_menu_keyboard() -> ReplyKeyboardMarkup:
             ],
         ],
         resize_keyboard=True,
+        one_time_keyboard=False,
         is_persistent=True,
-        input_field_placeholder="Выберите действие",
     )
+
+
+def private_menu_keyboard() -> ReplyKeyboardMarkup:
+    return private_main_keyboard()
 
 
 def support_amounts_keyboard() -> InlineKeyboardMarkup:

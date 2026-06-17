@@ -27,7 +27,7 @@ try:
         HELP_BUTTON_TEXT,
         SUPPORT_AMOUNTS,
         SUPPORT_BUTTON_TEXT,
-        private_menu_keyboard,
+        private_main_keyboard,
         start_keyboard,
         support_amounts_keyboard,
     )
@@ -40,7 +40,7 @@ except ImportError:
         HELP_BUTTON_TEXT,
         SUPPORT_AMOUNTS,
         SUPPORT_BUTTON_TEXT,
-        private_menu_keyboard,
+        private_main_keyboard,
         start_keyboard,
         support_amounts_keyboard,
     )
@@ -88,11 +88,7 @@ HELP_TEXT = f"""{TASLIM_TEXT}
 
 Я только мягко напоминаю участникам сохранять уважительный тон.
 
-Поддержать проект:
-нажмите кнопку «⭐ Поддержать проект» снизу.
-
-Сообщить о баге:
-@AbuSidq"""
+Если нашли баг или ложное срабатывание — напишите: @AbuSidq"""
 
 SUPPORT_TEXT = f"""{TASLIM_TEXT}
 
@@ -135,11 +131,7 @@ def register_handlers(
             START_TEXT,
             reply_markup=start_keyboard(bot_info.username or ""),
         )
-        await _safe_answer(
-            message,
-            "Выберите действие:",
-            reply_markup=private_menu_keyboard(),
-        )
+        await _refresh_private_keyboard(message)
 
     @dp.message(Command("help"))
     @dp.message(Command("adab_help"))
@@ -149,7 +141,7 @@ def register_handlers(
         await _safe_reply(
             message,
             HELP_TEXT,
-            reply_markup=private_menu_keyboard() if message.chat.type == "private" else None,
+            reply_markup=private_main_keyboard() if is_private_chat(message) else None,
         )
 
     @dp.message(Command("support"))
@@ -170,7 +162,7 @@ def register_handlers(
         await _safe_reply(
             message,
             BUG_REPORT_TEXT,
-            reply_markup=private_menu_keyboard() if message.chat.type == "private" else None,
+            reply_markup=private_main_keyboard() if is_private_chat(message) else None,
         )
 
     @dp.message(F.text == HELP_BUTTON_TEXT)
@@ -180,7 +172,7 @@ def register_handlers(
         await _safe_reply(
             message,
             HELP_TEXT,
-            reply_markup=private_menu_keyboard() if message.chat.type == "private" else None,
+            reply_markup=private_main_keyboard() if is_private_chat(message) else None,
         )
 
     @dp.message(Command("adab_status"))
@@ -265,12 +257,14 @@ def register_handlers(
 
         amount = _support_amount_from_callback(callback.data or "")
         if amount is None:
-            await callback.answer("Неизвестная сумма.", show_alert=True)
+            await callback.answer("Неверная сумма.", show_alert=True)
             return
+
+        await callback.answer()
 
         message = callback.message
         if not isinstance(message, Message):
-            await callback.answer("Не удалось открыть оплату.", show_alert=True)
+            logger.warning("Cannot send Stars invoice because callback message is unavailable")
             return
 
         payload = f"support_stars:{callback.from_user.id}:{amount}:{int(time())}"
@@ -288,8 +282,6 @@ def register_handlers(
             is_flexible=False,
             disable_notification=True,
         )
-        await callback.answer()
-
     @dp.pre_checkout_query()
     async def pre_checkout(query: PreCheckoutQuery) -> None:
         if query.invoice_payload.startswith("support_stars:"):
@@ -305,7 +297,11 @@ def register_handlers(
 
         payload = payment.invoice_payload
         if payment.currency == "XTR" and payload.startswith("support_stars:"):
-            await _safe_reply(message, SUPPORT_THANKS_TEXT)
+            await _safe_reply(
+                message,
+                SUPPORT_THANKS_TEXT,
+                reply_markup=private_main_keyboard() if is_private_chat(message) else None,
+            )
             if message.from_user is None:
                 return
             try:
@@ -365,7 +361,13 @@ async def _safe_answer(
 
 async def _send_support_options(message: Message) -> None:
     await _safe_reply(message, SUPPORT_TEXT, reply_markup=support_amounts_keyboard())
-    await _safe_answer(message, "Выберите действие:", reply_markup=private_menu_keyboard())
+    await _refresh_private_keyboard(message)
+
+
+async def _refresh_private_keyboard(message: Message) -> None:
+    if not is_private_chat(message):
+        return
+    await _safe_answer(message, "\u2060", reply_markup=private_main_keyboard())
 
 
 def _support_amount_from_callback(data: str) -> int | None:
@@ -383,6 +385,10 @@ def _support_amount_from_callback(data: str) -> int | None:
 
 def _from_bot(message: Message) -> bool:
     return message.from_user is not None and message.from_user.is_bot
+
+
+def is_private_chat(message: Message) -> bool:
+    return message.chat.type == "private"
 
 
 async def _set_commands(bot: Bot) -> None:
