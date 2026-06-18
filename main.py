@@ -134,7 +134,6 @@ def register_handlers(
             START_TEXT,
             reply_markup=start_keyboard(bot_info.username or ""),
         )
-        await _refresh_private_keyboard(message)
 
     @dp.message(Command("help"))
     @dp.message(Command("adab_help"))
@@ -255,6 +254,7 @@ def register_handlers(
 
     @dp.callback_query(F.data.startswith("support_stars:"))
     async def support_stars_callback(callback: CallbackQuery) -> None:
+        print("[SUPPORT_CALLBACK]", callback.data, callback.from_user.id, flush=True)
         if callback.from_user.is_bot:
             return
 
@@ -271,23 +271,29 @@ def register_handlers(
             return
 
         payload = f"support_stars:{callback.from_user.id}:{amount}:{int(time())}"
-        await message.answer_invoice(
-            title="Поддержка Adab Protector",
-            description="Добровольная поддержка развития бота и улучшения напоминаний об адабе.",
-            payload=payload,
-            currency="XTR",
-            prices=[LabeledPrice(label="Поддержка проекта", amount=amount)],
-            provider_token="",
-            need_name=False,
-            need_phone_number=False,
-            need_email=False,
-            need_shipping_address=False,
-            is_flexible=False,
-            disable_notification=True,
-        )
+        print("[SUPPORT_INVOICE]", amount, callback.from_user.id, flush=True)
+        try:
+            await message.answer_invoice(
+                title="Поддержка Adab Protector",
+                description="Добровольная поддержка развития бота и улучшения напоминаний об адабе.",
+                payload=payload,
+                currency="XTR",
+                prices=[LabeledPrice(label="Поддержка проекта", amount=amount)],
+                provider_token="",
+                need_name=False,
+                need_phone_number=False,
+                need_email=False,
+                need_shipping_address=False,
+                is_flexible=False,
+                disable_notification=True,
+            )
+        except TelegramAPIError:
+            logger.exception("Failed to send Stars invoice")
+
     @dp.pre_checkout_query()
     async def pre_checkout(query: PreCheckoutQuery) -> None:
-        if query.invoice_payload.startswith("support_stars:"):
+        payload = query.invoice_payload or ""
+        if payload.startswith("support_stars:"):
             await query.answer(ok=True)
             return
         await query.answer(ok=False, error_message="Неизвестный платёж.")
@@ -349,28 +355,8 @@ async def _safe_reply(
         return False
 
 
-async def _safe_answer(
-    message: Message,
-    text: str,
-    reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
-) -> bool:
-    try:
-        await message.answer(text, disable_notification=True, reply_markup=reply_markup)
-        return True
-    except TelegramAPIError:
-        logger.exception("Failed to send Telegram answer")
-        return False
-
-
 async def _send_support_options(message: Message) -> None:
     await _safe_reply(message, SUPPORT_TEXT, reply_markup=support_amounts_keyboard())
-    await _refresh_private_keyboard(message)
-
-
-async def _refresh_private_keyboard(message: Message) -> None:
-    if not is_private_chat(message):
-        return
-    await _safe_answer(message, "\u2060", reply_markup=private_main_keyboard())
 
 
 def _support_amount_from_callback(data: str) -> int | None:
