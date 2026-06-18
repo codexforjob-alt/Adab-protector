@@ -442,6 +442,7 @@ async def _run_webhook(config: Config) -> None:
             webhook_url,
             secret_token=config.webhook_secret_token or None,
             drop_pending_updates=True,
+            allowed_updates=dp.resolve_used_update_types(),
         )
         logger.info("Adab bot started in webhook mode: %s", webhook_url)
 
