@@ -34,6 +34,20 @@ class RuleSettings:
     caps_ratio: float = 0.7
 
 
+NORMAL_SHORT_MESSAGES = frozenset(
+    {
+        "да",
+        "нет",
+        "ок",
+        "окей",
+        "ага",
+        "угу",
+        "ну",
+        "не",
+    }
+)
+
+
 # Редактируемые локальные списки. Vulgar/word-specific проверяются до profanity, чтобы не писать 'без мата' на не-мат.
 WORD_SPECIFIC_REPLIES = {
     "половой орган": {
@@ -932,6 +946,38 @@ def _is_caps_aggression(text: str, settings: RuleSettings) -> bool:
     return uppercase / len(letters) >= settings.caps_ratio
 
 
+def _history_normalized_text(message: dict[str, Any]) -> str:
+    return str(
+        message.get("normalized_text") or normalize_text(message.get("message_text", ""))
+    ).strip()
+
+
+def _is_flood_fragment(normalized: str) -> bool:
+    words = re.findall(r"[а-яa-z0-9]+", normalized)
+    if len(words) != 1:
+        return False
+
+    word = words[0]
+    if word in NORMAL_SHORT_MESSAGES:
+        return False
+
+    return len(word) <= 3
+
+
+def _has_fragment_flood(
+    normalized_messages: list[str],
+    settings: RuleSettings,
+) -> bool:
+    required_messages = max(settings.flood_messages_limit, 1)
+    if len(normalized_messages) < required_messages:
+        return False
+
+    recent = normalized_messages[-required_messages:]
+    fragment_count = sum(1 for message in recent if _is_flood_fragment(message))
+    minimum_fragments = min(required_messages, max(4, (required_messages * 4 + 4) // 5))
+    return fragment_count >= minimum_fragments
+
+
 def _check_history(
     recent_messages: list[dict[str, Any]],
     settings: RuleSettings,
@@ -946,18 +992,29 @@ def _check_history(
     in_window = [
         message for message in recent_messages if int(message.get("created_at", 0)) >= window_start
     ]
-    if len(in_window) >= settings.flood_messages_limit:
-        return _violation("flood", "слишком много сообщений за короткое время", user_id, chat_id)
 
     normalized_messages = [
-        str(message.get("normalized_text") or normalize_text(message.get("message_text", "")))
+        _history_normalized_text(message)
         for message in recent_messages
-        if str(message.get("normalized_text") or normalize_text(message.get("message_text", "")))
     ]
+    normalized_messages = [message for message in normalized_messages if message]
     if len(normalized_messages) >= 3 and len(set(normalized_messages[-3:])) == 1:
         return _violation(
             "repeated_message",
             "три одинаковых сообщения подряд",
+            user_id,
+            chat_id,
+        )
+
+    in_window_normalized = [
+        _history_normalized_text(message)
+        for message in in_window
+    ]
+    in_window_normalized = [message for message in in_window_normalized if message]
+    if _has_fragment_flood(in_window_normalized, settings):
+        return _violation(
+            "flood",
+            "много очень коротких сообщений за короткое время",
             user_id,
             chat_id,
         )
@@ -1190,6 +1247,48 @@ def _run_manual_check() -> None:
         )
     if failures:
         raise AssertionError("Manual moderation checks failed:\n" + "\n".join(failures))
+
+    now = int(time())
+
+    def history(*texts: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "message_text": text,
+                "normalized_text": normalize_text(text),
+                "created_at": now - len(texts) + index,
+            }
+            for index, text in enumerate(texts, start=1)
+        ]
+
+    history_samples = [
+        (("а", "м", "о", "н", "и", "е"), "flood"),
+        (("Да", "Понял", "Сейчас посмотрю", "Я думаю так", "Может быть"), "none"),
+        (("Понял", "Понял", "Понял"), "repeated_message"),
+    ]
+    for index, (messages, expected_category) in enumerate(history_samples, start=1):
+        result = check_message(
+            messages[-1],
+            user_id=2,
+            chat_id=20_000 + index,
+            recent_messages=history(*messages),
+            settings=RuleSettings(),
+        )
+        actual_category = str(result["category"])
+        ok = actual_category == expected_category
+        if not ok:
+            raise AssertionError(
+                f"{messages!r}: expected {expected_category}, got {actual_category}"
+            )
+        print(
+            {
+                "history": messages,
+                "expected": expected_category,
+                "category": actual_category,
+                "violation": result["violation"],
+                "ok": ok,
+                "reply": result["reply"],
+            }
+        )
 
 
 if __name__ == "__main__":
