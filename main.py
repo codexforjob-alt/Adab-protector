@@ -11,9 +11,12 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.types import (
     BotCommand,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeDefault,
     CallbackQuery,
     InlineKeyboardMarkup,
     LabeledPrice,
+    MenuButtonCommands,
     Message,
     PreCheckoutQuery,
     ReplyKeyboardMarkup,
@@ -29,8 +32,7 @@ try:
         SUPPORT_BUTTON_TEXT,
         private_main_keyboard,
         start_keyboard,
-        support_menu_inline_keyboard,
-        support_options_keyboard,
+        support_amounts_keyboard,
     )
     from .rules import check_message, normalize_text
     from .storage import AdabStorage
@@ -43,8 +45,7 @@ except ImportError:
         SUPPORT_BUTTON_TEXT,
         private_main_keyboard,
         start_keyboard,
-        support_menu_inline_keyboard,
-        support_options_keyboard,
+        support_amounts_keyboard,
     )
     from rules import check_message, normalize_text
     from storage import AdabStorage
@@ -143,9 +144,8 @@ def register_handlers(
         await _safe_reply(
             message,
             HELP_TEXT,
-            reply_markup=support_menu_inline_keyboard() if is_private_chat(message) else None,
+            reply_markup=private_main_keyboard() if is_private_chat(message) else None,
         )
-        await _refresh_private_keyboard(message)
 
     @dp.message(Command("support"))
     @dp.message(F.text == SUPPORT_BUTTON_TEXT)
@@ -165,9 +165,8 @@ def register_handlers(
         await _safe_reply(
             message,
             BUG_REPORT_TEXT,
-            reply_markup=support_menu_inline_keyboard() if is_private_chat(message) else None,
+            reply_markup=private_main_keyboard() if is_private_chat(message) else None,
         )
-        await _refresh_private_keyboard(message)
 
     @dp.message(F.text == HELP_BUTTON_TEXT)
     async def help_button(message: Message) -> None:
@@ -176,9 +175,8 @@ def register_handlers(
         await _safe_reply(
             message,
             HELP_TEXT,
-            reply_markup=support_menu_inline_keyboard() if is_private_chat(message) else None,
+            reply_markup=private_main_keyboard() if is_private_chat(message) else None,
         )
-        await _refresh_private_keyboard(message)
 
     @dp.message(Command("adab_status"))
     async def adab_status(message: Message, bot: Bot) -> None:
@@ -323,35 +321,6 @@ def register_handlers(
             except Exception:
                 logger.exception("Failed to record support payment")
 
-    @dp.callback_query(F.data == "open_support")
-    async def open_support_callback(callback: CallbackQuery) -> None:
-        await callback.answer()
-        if callback.from_user.is_bot:
-            return
-        message = callback.message
-        if isinstance(message, Message):
-            await _send_support_options(message)
-
-    @dp.callback_query(F.data == "open_bug")
-    async def open_bug_callback(callback: CallbackQuery) -> None:
-        await callback.answer()
-        if callback.from_user.is_bot:
-            return
-        message = callback.message
-        if isinstance(message, Message):
-            await _safe_reply(message, BUG_REPORT_TEXT, reply_markup=support_menu_inline_keyboard())
-            await _refresh_private_keyboard(message)
-
-    @dp.callback_query(F.data == "open_help")
-    async def open_help_callback(callback: CallbackQuery) -> None:
-        await callback.answer()
-        if callback.from_user.is_bot:
-            return
-        message = callback.message
-        if isinstance(message, Message):
-            await _safe_reply(message, HELP_TEXT, reply_markup=support_menu_inline_keyboard())
-            await _refresh_private_keyboard(message)
-
 
 async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
     try:
@@ -394,7 +363,7 @@ async def _safe_answer(
 
 
 async def _send_support_options(message: Message) -> None:
-    await _safe_reply(message, SUPPORT_TEXT, reply_markup=support_options_keyboard())
+    await _safe_reply(message, SUPPORT_TEXT, reply_markup=support_amounts_keyboard())
     await _refresh_private_keyboard(message)
 
 
@@ -427,15 +396,21 @@ def is_private_chat(message: Message) -> bool:
 
 async def _set_commands(bot: Bot) -> None:
     try:
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
         await bot.set_my_commands(
             [
-                BotCommand(command="start", description="Приветствие и добавление в группу"),
-                BotCommand(command="help", description="Как работает бот адаба"),
-                BotCommand(command="adab_help", description="Как работает бот адаба"),
-                BotCommand(command="support", description="Поддержать проект"),
-                BotCommand(command="bug", description="Сообщить о баге"),
+                BotCommand(command="start", description="Запустить бота"),
+                BotCommand(command="help", description="ℹ️ Помощь"),
+                BotCommand(command="support", description="⭐ Поддержать проект"),
+                BotCommand(command="bug", description="🛠 Сообщить о баге"),
+            ],
+            scope=BotCommandScopeAllPrivateChats(),
+        )
+        await bot.set_my_commands(
+            [
                 BotCommand(command="adab_status", description="Статус и предупреждения"),
-            ]
+            ],
+            scope=BotCommandScopeDefault(),
         )
     except TelegramAPIError:
         logger.exception("Failed to set bot commands")

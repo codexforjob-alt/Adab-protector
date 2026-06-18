@@ -20,11 +20,6 @@ def start_keyboard(bot_username: str) -> InlineKeyboardMarkup:
                     url=f"https://t.me/{username}?startgroup=true",
                 )
             ],
-            [InlineKeyboardButton(text=SUPPORT_BUTTON_TEXT, callback_data="open_support")],
-            [
-                InlineKeyboardButton(text=BUG_BUTTON_TEXT, callback_data="open_bug"),
-                InlineKeyboardButton(text=HELP_BUTTON_TEXT, callback_data="open_help"),
-            ],
         ]
     )
 
@@ -48,18 +43,6 @@ def private_menu_keyboard() -> ReplyKeyboardMarkup:
     return private_main_keyboard()
 
 
-def support_menu_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=SUPPORT_BUTTON_TEXT, callback_data="open_support")],
-            [
-                InlineKeyboardButton(text=BUG_BUTTON_TEXT, callback_data="open_bug"),
-                InlineKeyboardButton(text=HELP_BUTTON_TEXT, callback_data="open_help"),
-            ],
-        ]
-    )
-
-
 def support_amounts_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -70,26 +53,6 @@ def support_amounts_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="⭐ 50", callback_data="support_stars:50"),
                 InlineKeyboardButton(text="⭐ 100", callback_data="support_stars:100"),
-            ],
-        ]
-    )
-
-
-def support_options_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⭐ 10", callback_data="support_stars:10"),
-                InlineKeyboardButton(text="⭐ 25", callback_data="support_stars:25"),
-            ],
-            [
-                InlineKeyboardButton(text="⭐ 50", callback_data="support_stars:50"),
-                InlineKeyboardButton(text="⭐ 100", callback_data="support_stars:100"),
-            ],
-            [InlineKeyboardButton(text=SUPPORT_BUTTON_TEXT, callback_data="open_support")],
-            [
-                InlineKeyboardButton(text=BUG_BUTTON_TEXT, callback_data="open_bug"),
-                InlineKeyboardButton(text=HELP_BUTTON_TEXT, callback_data="open_help"),
             ],
         ]
     )
