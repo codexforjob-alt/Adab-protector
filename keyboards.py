@@ -3,7 +3,7 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 
-SUPPORT_BUTTON_TEXT = "⭐ Поддержать проект"
+SUPPORT_BUTTON_TEXT = "❤️ Поддержать проект"
 BUG_BUTTON_TEXT = "🛠 Сообщить о баге"
 HELP_BUTTON_TEXT = "ℹ️ Помощь"
 

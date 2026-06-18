@@ -112,10 +112,13 @@ BUG_REPORT_TEXT = f"""{TASLIM_TEXT}
 • как ответил бот;
 • почему, по вашему мнению, это ошибка."""
 
-SUPPORT_THANKS_TEXT = """جزاك الله خيرا
+SUPPORT_THANKS_TEXT = """Спасибо вам большое за поддержку проекта!
 
-Спасибо за поддержку проекта!
-Пусть Аллах воздаст вам благом."""
+Ваш вклад помогает развивать бота, исправлять ошибки и делать напоминания об адабе лучше и полезнее.
+Очень ценю вашу поддержку, доверие и желание помочь этому делу.
+Пусть Аллах примет это от вас, увеличит вам благо, даст баракат в делах и воздаст вам намного большим.
+
+جزاك اللهُ خيرًا"""
 
 
 def register_handlers(
@@ -274,11 +277,11 @@ def register_handlers(
         print("[SUPPORT_INVOICE]", amount, callback.from_user.id, flush=True)
         try:
             await message.answer_invoice(
-                title="Поддержка Adab Protector",
-                description="Добровольная поддержка развития бота и улучшения напоминаний об адабе.",
+                title=f"Поддержка Adab Protector — {amount} ⭐",
+                description=f"Добровольная поддержка проекта на {amount} Telegram Stars. Спасибо за помощь в развитии бота.",
                 payload=payload,
                 currency="XTR",
-                prices=[LabeledPrice(label="Поддержка проекта", amount=amount)],
+                prices=[LabeledPrice(label=f"Поддержка проекта — {amount} ⭐", amount=amount)],
                 provider_token="",
                 need_name=False,
                 need_phone_number=False,
@@ -304,7 +307,7 @@ def register_handlers(
         if payment is None:
             return
 
-        payload = payment.invoice_payload
+        payload = payment.invoice_payload or ""
         if payment.currency == "XTR" and payload.startswith("support_stars:"):
             await _safe_reply(
                 message,
@@ -387,7 +390,7 @@ async def _set_commands(bot: Bot) -> None:
             [
                 BotCommand(command="start", description="Запустить бота"),
                 BotCommand(command="help", description="ℹ️ Помощь"),
-                BotCommand(command="support", description="⭐ Поддержать проект"),
+                BotCommand(command="support", description="❤️ Поддержать проект"),
                 BotCommand(command="bug", description="🛠 Сообщить о баге"),
             ],
             scope=BotCommandScopeAllPrivateChats(),
