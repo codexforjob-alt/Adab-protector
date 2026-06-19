@@ -9,9 +9,9 @@ from time import time
 from typing import Any
 
 try:
-    from .replies import get_reply
+    from .replies import REPLIES, get_reply
 except ImportError:
-    from replies import get_reply
+    from replies import REPLIES, get_reply
 
 
 logger = logging.getLogger(__name__)
@@ -52,63 +52,63 @@ NORMAL_SHORT_MESSAGES = frozenset(
 WORD_SPECIFIC_REPLIES = {
     "половой орган": {
         "category": "vulgar_language",
-        "reply": "Брат, давай без неприличных выражений. Сохраним чистоту речи.",
+        "reply": "Брат, ради Аллаха, давай без неприличных выражений.",
     },
     "моча": {
         "category": "vulgar_language",
-        "reply": "Давайте не засорять чат такими словами. Пусть речь будет приличной.",
+        "reply": "Пусть Аллах поможет нам сохранять чистоту речи.",
     },
     "кал": {
         "category": "vulgar_language",
-        "reply": "Брат, лучше избегать грязных слов в общем чате.",
+        "reply": "Брат, ради Аллаха, давай без грубых слов.",
     },
     "калл": {
         "category": "vulgar_language",
-        "reply": "Брат, лучше избегать грязных слов в общем чате.",
+        "reply": "Брат, ради Аллаха, давай без грубых слов.",
     },
     "говно": {
         "category": "vulgar_language",
-        "reply": "Брат, давай без грубых и грязных слов. Сохраним адаб.",
+        "reply": "Сохраним чистоту речи ради Аллаха.",
     },
     "писька": {
         "category": "vulgar_language",
-        "reply": "Брат, давай без неприличных слов. Сохраним чистоту речи.",
+        "reply": "Брат, ради Аллаха, давай без неприличных слов.",
     },
     "писка": {
         "category": "vulgar_language",
-        "reply": "Брат, давай без неприличных слов. Сохраним чистоту речи.",
+        "reply": "Брат, ради Аллаха, давай без неприличных слов.",
     },
     "дрочил": {
         "category": "vulgar_language",
-        "reply": "Брат, давай без неприличных слов. Сохраним чистоту речи.",
+        "reply": "Пусть Аллах поможет нам сохранять адаб в словах.",
     },
     "дрочить": {
         "category": "vulgar_language",
-        "reply": "Брат, давай без неприличных слов. Сохраним чистоту речи.",
+        "reply": "Пусть Аллах поможет нам сохранять адаб в словах.",
     },
     "дрочка": {
         "category": "vulgar_language",
-        "reply": "Брат, давай без неприличных слов. Сохраним чистоту речи.",
+        "reply": "Пусть Аллах поможет нам сохранять адаб в словах.",
     },
     "член": {
         "category": "vulgar_language",
-        "reply": "Брат, давай без неприличных выражений. Сохраним чистоту речи.",
+        "reply": "Брат, ради Аллаха, давай без неприличных выражений.",
     },
     "пенис": {
         "category": "vulgar_language",
-        "reply": "Брат, давай без неприличных выражений. Сохраним чистоту речи.",
+        "reply": "Брат, ради Аллаха, давай без неприличных выражений.",
     },
     "жопа": {
         "category": "vulgar_language",
-        "reply": "Брат, лучше избегать грубых слов в общем чате.",
+        "reply": "Сохраним чистоту речи ради Аллаха.",
     },
     "задница": {
         "category": "vulgar_language",
-        "reply": "Брат, лучше избегать грубых слов в общем чате.",
+        "reply": "Сохраним чистоту речи ради Аллаха.",
     },
     "тряпка": {
         "category": "personal_insult",
-        "reply": "Брат, давай без унизительных слов в адрес людей. Сохраним уважение.",
+        "reply": "Брат, ради Аллаха, давай без унизительных слов в адрес людей.",
     },
 }
 
@@ -119,7 +119,7 @@ PROFANITY_PATTERNS = [
     r"х\s*е\s*р[а-я]*",
     r"п\s*и\s*з\s*д[а-я]*",
     r"п\s*з\s*д\s*ц",
-    r"б\s*л\s*[яа](?:т[ьб]?|д[ьб]?|[а-я]*)",
+    r"б\s*л\s*[яа](?:т[ьб]?[а-я]*|д[ьб]?[а-я]*)?",
     r"е\s*б[а-я]*",
     r"ё\s*б[а-я]*",
     r"за\s*е\s*б[а-я]*",
@@ -179,6 +179,7 @@ INSULT_PATTERNS = [
     r"твар[а-я]*",
     r"урод[а-я]*",
     r"чмо",
+    r"слаб(?:ый|ая|ое|ые|ого|ому|ым|ыми|ых|ую|о)",
 ]
 
 RUDE_COMMAND_PATTERNS = [
@@ -223,6 +224,61 @@ RELIGIOUS_TERMS = (
     "хариджит",
     "рафидит",
     "джахмит",
+    "неверующий",
+    "неверие",
+    "мурджиит",
+    "матуридит",
+    "мазхаб",
+)
+
+SAFE_RELIGIOUS_OR_EDUCATIONAL_MARKERS = (
+    "хадис",
+    "книга",
+    "сунан",
+    "ат-тирмизи",
+    "посланник аллаха",
+    "мир ему и благословение аллаха",
+    "да будет доволен им аллах",
+    "да помилует его аллах",
+    "да обрадует",
+    "хвала аллаху",
+    "с именем аллаха",
+    "пусть аллах",
+    "мы просим у аллаха",
+    "поносит аллаха",
+    "аллаха и его посланника",
+    "ин ша аллах",
+    "баракаллаху",
+    "джазака ллаху хайран",
+    "шейх",
+    "имам",
+    "шарх",
+    "иснад",
+    "передают со слов",
+    "ученик",
+    "ученики",
+    "учебный модуль",
+    "марказ",
+    "учебная программа",
+    "урок",
+    "знания",
+    "талабуль илм",
+    "фатва",
+    "дуа",
+    "ду'а",
+    "мазхаб",
+    "мурджиит",
+    "мурджиитов",
+    "ашарит",
+    "саляфит",
+    "матуридит",
+    "кяфир",
+    "неверующий",
+    "неверие",
+    "слова неверия",
+    "такфир",
+    "ширк",
+    "куфр",
 )
 
 MEDICAL_OR_EDUCATIONAL_WORDS = (
@@ -276,6 +332,22 @@ SAFE_TUPOY_PATTERNS = (
     r"туп(?:ой|ая|ое|ые|ого|ую|ым|ыми|ых)?\s+сторон[а-я]*(?:\s+ножа)?",
 )
 
+SAFE_SLABY_PATTERNS = (
+    r"слаб[а-я]*\s+(?:хадис|иснад|передатчик|довод|мнение)",
+    r"(?:хадис|иснад|передатчик|довод|мнение)\s+(?:очень\s+)?слаб[а-я]*",
+)
+
+CAPS_PRESSURE_PATTERNS = (
+    r"ты\s+что",
+    r"ты(?:\s+[а-я]+){0,4}\s+не\s+понимаешь",
+    r"я\s+сказал",
+    r"не\s+пиши",
+    r"не\s+смей",
+    r"хватит",
+    r"замолчи",
+    r"сюда\s+больше",
+)
+
 
 def _compile_word_patterns(patterns: list[str]) -> list[tuple[str, re.Pattern[str]]]:
     return [
@@ -320,6 +392,17 @@ def normalize_text(text: str | None) -> str:
     )
     normalized = re.sub(r"\s+", " ", normalized)
     return normalized.strip()
+
+
+def is_safe_religious_or_educational_context(text: str | None) -> bool:
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+
+    return any(
+        normalize_text(marker) in normalized
+        for marker in SAFE_RELIGIOUS_OR_EDUCATIONAL_MARKERS
+    )
 
 
 def _word_or_phrase_pattern(value: str, suffix: bool = True) -> str:
@@ -714,19 +797,31 @@ def check_message(
     normalized = normalize_text(original_text)
 
     def finish(result: dict[str, Any], matched: str | None) -> dict[str, Any]:
+        if result["category"] != "none" and not matched:
+            logger.warning(
+                "[FALSE_POSITIVE_GUARD] category=%s reason=%s",
+                result["category"],
+                result["reason"],
+            )
+            result = _no_violation()
         return _debug_result(result, matched, original_text, normalized)
 
     logger.debug("Moderation input: has_text=%s length=%s", bool(original_text), len(original_text))
     if not normalized:
         return finish(_no_violation(), None)
 
-    if THREAT_RE.search(normalized):
-        return finish(_violation("threat", "найдена прямая угроза", user_id, chat_id), None)
+    threat_match = THREAT_RE.search(normalized)
+    if threat_match:
+        return finish(
+            _violation("threat", "найдена прямая угроза", user_id, chat_id),
+            threat_match.group(0),
+        )
 
-    if PROVOCATION_RE.search(normalized):
+    provocation_match = PROVOCATION_RE.search(normalized)
+    if provocation_match:
         return finish(
             _violation("provocation", "найдена агрессивная провокация", user_id, chat_id),
-            None,
+            provocation_match.group(0),
         )
 
     if is_meta_discussion(normalized):
@@ -758,10 +853,11 @@ def check_message(
             insulting_pattern,
         )
 
-    if MOCKERY_RE.search(normalized):
+    mockery_match = MOCKERY_RE.search(normalized)
+    if mockery_match:
         return finish(
             _violation("mockery", "найдена грубая насмешка", user_id, chat_id),
-            None,
+            mockery_match.group(0),
         )
 
     # Точечные слова/фразы проверяем перед общими vulgar/profanity.
@@ -793,7 +889,8 @@ def check_message(
         return finish(_profanity_violation(user_id, chat_id), profanity_pattern)
 
     rule_settings = _settings_from_config(settings)
-    if _is_caps_aggression(original_text, rule_settings):
+    safe_context = is_safe_religious_or_educational_context(original_text)
+    if _is_caps_aggression(original_text, rule_settings, safe_context=safe_context):
         return finish(
             _violation(
                 "spam_caps",
@@ -801,12 +898,13 @@ def check_message(
                 user_id,
                 chat_id,
             ),
-            None,
+            "агрессивный капс",
         )
 
     history_result = _check_history(recent_messages or [], rule_settings, user_id, chat_id)
     if history_result:
-        return finish(history_result, None)
+        result, matched_rule = history_result
+        return finish(result, matched_rule)
 
     return finish(_no_violation(), None)
 
@@ -866,6 +964,8 @@ def _is_safe_insult_context(insult: str, normalized: str) -> bool:
         return any(re.search(pattern, normalized, re.IGNORECASE) for pattern in SAFE_TUPOY_PATTERNS)
     if insult.startswith("тряпк"):
         return _is_safe_tryapka_context(normalized)
+    if insult.startswith("слаб"):
+        return any(re.search(pattern, normalized, re.IGNORECASE) for pattern in SAFE_SLABY_PATTERNS)
     return False
 
 
@@ -933,7 +1033,11 @@ def _is_vulgar_word(word: str) -> bool:
     }
 
 
-def _is_caps_aggression(text: str, settings: RuleSettings) -> bool:
+def _is_caps_aggression(
+    text: str,
+    settings: RuleSettings,
+    safe_context: bool = False,
+) -> bool:
     stripped = text.strip()
     if len(stripped) <= settings.caps_min_length:
         return False
@@ -943,7 +1047,14 @@ def _is_caps_aggression(text: str, settings: RuleSettings) -> bool:
         return False
 
     uppercase = sum(1 for char in letters if char.isupper())
-    return uppercase / len(letters) >= settings.caps_ratio
+    if uppercase / len(letters) < settings.caps_ratio:
+        return False
+
+    if not safe_context:
+        return True
+
+    normalized = normalize_text(text)
+    return any(re.search(pattern, normalized) for pattern in CAPS_PRESSURE_PATTERNS)
 
 
 def _history_normalized_text(message: dict[str, Any]) -> str:
@@ -983,7 +1094,7 @@ def _check_history(
     settings: RuleSettings,
     user_id: int,
     chat_id: int,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any], str] | None:
     if not recent_messages:
         return None
 
@@ -999,11 +1110,14 @@ def _check_history(
     ]
     normalized_messages = [message for message in normalized_messages if message]
     if len(normalized_messages) >= 3 and len(set(normalized_messages[-3:])) == 1:
-        return _violation(
-            "repeated_message",
-            "три одинаковых сообщения подряд",
-            user_id,
-            chat_id,
+        return (
+            _violation(
+                "repeated_message",
+                "три одинаковых сообщения подряд",
+                user_id,
+                chat_id,
+            ),
+            "повтор сообщения",
         )
 
     in_window_normalized = [
@@ -1012,11 +1126,14 @@ def _check_history(
     ]
     in_window_normalized = [message for message in in_window_normalized if message]
     if _has_fragment_flood(in_window_normalized, settings):
-        return _violation(
-            "flood",
-            "много очень коротких сообщений за короткое время",
-            user_id,
-            chat_id,
+        return (
+            _violation(
+                "flood",
+                "много очень коротких сообщений за короткое время",
+                user_id,
+                chat_id,
+            ),
+            "серия коротких сообщений",
         )
 
     return None
@@ -1112,6 +1229,61 @@ def _env_flag(name: str) -> bool:
 
 def _run_manual_check() -> None:
     samples = [
+        (
+            "И есть сейчас люди, которые говорят: человек не становится неверующим, "
+            "даже если он произносит слова неверия. Если он поносит Аллаха и Его "
+            "Посланника, то он не объявляется неверующим. И это мазхаб крайних "
+            "мурджиитов. Мы просим у Аллаха благополучия и сохранности. "
+            "Шарх шейха Фаузана.",
+            "none",
+        ),
+        (
+            "Прямые ученики Шейх уль-Исляма. 1 - Шейх уль-Ислям Абу Ибрахим. "
+            "2 - Имам аль-Муджадид Абу Мухаммад. Да обрадует их Аллах фирдаусом, "
+            "мир им и благословения Аллаха.",
+            "none",
+        ),
+        (
+            "Время для нового хадиса! Книга: Сунан ат-Тирмизи. Номер хадиса: 3401. "
+            "Передают со слов Абу Хурайры, что Посланник Аллаха сказал. "
+            "Хвала Аллаху, Который исцелил моё тело.",
+            "none",
+        ),
+        (
+            "ВТОРОЙ УЧЕБНЫЙ МОДУЛЬ\nС именем Аллаха, Милостивого, Дарующего "
+            "милость. Рады объявить о начале приема заявок на учебный модуль марказа. "
+            "Учебная программа делится на модули. Цена за 1 модуль: 1000 руб. "
+            "Подпишись на канал марказа.",
+            "none",
+        ),
+        ("Ин Ша Аллах благом будет для тебя", "none"),
+        ("И Хвала Аллаху Господу миров!", "none"),
+        ("Мы просим у Аллаха благополучия и сохранности", "none"),
+        ("человек не становится неверующим", "none"),
+        ("слова неверия", "none"),
+        ("поносит Аллаха и Его Посланника", "none"),
+        ("мазхаб крайних мурджиитов", "none"),
+        ("Прямые ученики Шейх уль-Исляма", "none"),
+        ("Да обрадует их Аллах фирдаусом", "none"),
+        ("Время для нового хадиса", "none"),
+        ("Книга: Сунан ат-Тирмизи", "none"),
+        ("Передают со слов Абу Хурайры", "none"),
+        ("Хвала Аллаху, Который исцелил моё тело", "none"),
+        ("ВТОРОЙ УЧЕБНЫЙ МОДУЛЬ", "none"),
+        ("С именем Аллаха, Милостивого, Дарующего милость", "none"),
+        ("Рады объявить о начале приема заявок", "none"),
+        ("Учебная программа", "none"),
+        ("Цена за 1 модуль: 1000 руб", "none"),
+        ("Подпишись на канал марказа", "none"),
+        ("ОЧЕНЬ СЛАБЫЙ хадис", "none"),
+        ("данный хадис слабый", "none"),
+        ("иснад слабый", "none"),
+        ("передатчик слабый", "none"),
+        ("этот довод слабый", "none"),
+        ("это мнение слабое", "none"),
+        ("ты слабый", "personal_insult"),
+        ("я тебя убью ин ша Аллах", "threat"),
+        ("ТЫ ЧТО НЕ ПОНИМАЕШЬ Я СКАЗАЛ НЕ ПИШИ", "spam_caps"),
         ("Слово идиот нельзя говорить", "none"),
         ("Он сказал слово идиот", "none"),
         ("Она написала слово тупой", "none"),
@@ -1233,6 +1405,9 @@ def _run_manual_check() -> None:
         if expected_category == "vulgar_language" and "мат" in str(result["reply"]).lower():
             ok = False
             failures.append(f"{sample!r}: vulgar_language reply mentions мат")
+        if expected_category != "none" and "аллах" not in str(result["reply"]).lower():
+            ok = False
+            failures.append(f"{sample!r}: reminder does not mention Аллаха")
         if not ok:
             failures.append(f"{sample!r}: expected {expected_category}, got {actual_category}")
         print(
@@ -1247,6 +1422,13 @@ def _run_manual_check() -> None:
         )
     if failures:
         raise AssertionError("Manual moderation checks failed:\n" + "\n".join(failures))
+
+    for category, replies in REPLIES.items():
+        for reply in replies:
+            if "аллах" not in reply.lower():
+                raise AssertionError(
+                    f"Reply for {category!r} does not mention Аллаха: {reply!r}"
+                )
 
     now = int(time())
 
@@ -1275,6 +1457,8 @@ def _run_manual_check() -> None:
         )
         actual_category = str(result["category"])
         ok = actual_category == expected_category
+        if expected_category != "none" and "аллах" not in str(result["reply"]).lower():
+            ok = False
         if not ok:
             raise AssertionError(
                 f"{messages!r}: expected {expected_category}, got {actual_category}"
